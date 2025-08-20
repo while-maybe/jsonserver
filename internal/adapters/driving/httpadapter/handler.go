@@ -31,6 +31,7 @@ func (h *Handler) SetupRoutes() http.Handler {
 	router.Use(middleware.Recoverer)
 
 	router.Get("/{resourceName}", h.GetAllRecords)
+	router.Get("/{resourceName}/{resourceID}", h.GetRecordByID)
 
 	return router
 }
@@ -62,4 +63,32 @@ func (h *Handler) GetAllRecords(w http.ResponseWriter, r *http.Request) {
 	if err := jsonv2.MarshalWrite(w, records, opts); err != nil {
 		log.Printf("ERROR: Failed to encode response for '%s': %v", resourceName, err)
 	}
+}
+
+func (h *Handler) GetRecordByID(w http.ResponseWriter, r *http.Request) {
+	resourceName := chi.URLParam(r, "resourceName")
+	resourceID := chi.URLParam(r, "resourceID")
+
+	record, err := h.resourceService.GetRecordByID(r.Context(), resourceName, resourceID)
+	if err != nil {
+		if errors.Is(err, resource.ErrEmptyResourceName) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if errors.Is(err, resource.ErrNotFound) {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+
+	opts := jsonv2.JoinOptions(jsontext.Multiline(true), jsontext.WithIndent("  "))
+	if err := jsonv2.MarshalWrite(w, record, opts); err != nil {
+		log.Printf("ERROR: Failed to encode response for '%s' with ID '%s': %v", resourceName, resourceID, err)
+	}
+
 }

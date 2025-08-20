@@ -1,0 +1,217 @@
+# Dependencies
+/node_modules
+node_modules/
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+jspm_packages/
+bower_components/
+
+# Package Manager Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Package manager files
+*.deb
+*.rpm
+*.tar.gz
+
+# Testing
+/coverage
+coverage/
+*.lcov
+**/.pytest_cache/**
+.cache-loader
+
+# Next.js
+/.next/
+/out/
+
+# Production / Build
+/build
+/dist
+*.o
+*.obj
+*.ilk
+*.pdb
+
+# Operating System Files
+## macOS
+.DS_Store
+*.pem
+._*
+
+## Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+## Linux
+*.swp
+*.swo
+
+# Icon must end with two \r
+Icon\r\r
+
+# Debug & Logs
+*.log
+*.bak
+*.rej
+*.tmp
+*~
+.~lock
+
+# Environment Files
+.env
+.env.local
+.env.development
+.env.development.local
+.env.test
+.env.test.local
+.env.production
+.env.production.local
+.env*.local
+
+# IDE and Editor Files
+## VSCode
+.vscode/
+**/.vscode/**
+## JetBrains
+.idea/
+*.iml
+## Other IDEs
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+.vs/
+*.sublime-workspace
+*.sublime-project
+*.cproject
+*.project
+
+# Programming Languages
+## TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+## Python
+*.pyc
+**/__pycache__/**
+**/.venv/**
+
+## Java
+*.class
+
+## Compiled Libraries
+*.dll
+*.so
+
+# PWA files
+public/sw.js
+public/workbox-*.js
+public/worker-*.js
+public/sw.js.map
+public/workbox-*.js.map
+public/worker-*.js.map
+
+# Documentation & Presentations
+*.pptx
+*.ppt
+
+# Storybook
+storybook-static/
+
+# Testing Outputs
+/cypress/videos/
+/cypress/screenshots/
+
+# Cache Files
+.cache/
+.eslintcache
+.stylelintcache
+*.cache
+
+# Build Documentation
+.docusaurus
+
+# General temporary files
+*.tmp
+*.temp
+*~
+
+# Vim swap and backup files
+*.swp
+*.swo
+*.swn
+*.bak
+*.orig
+
+# Emacs backup files
+*~
+.\#*
+
+# Temporary files created by OpenOffice/LibreOffice
+# These are often prefixed with a dot and "lock" or "~$" for temporary lock files
+.~lock.*
+.~*#
+
+# macOS temporary files
+.DS_Store
+._*
+
+# Temporary files created by text editors or while editing
+Thumbs.db
+
+# generated below by perplexity.ai and added on 29/03/2025
+# Binaries for programs and plugins
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+
+# Output of the Go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go build artifacts
+bin/
+obj/
+
+# IDE/editor-specific files
+.vscode/
+.idea/
+*.swp
+
+# Logs and temporary files
+*.log
+temp/
+
+# Ignore all files in a directory except Go source files
+main/*
+!main/*.go
+
+# Exclude build output (e.g., executables created by `go build`)
+/<project_name>
+
+# not needed
+folder_info.md
+
+# exclude binaries
+./jsonserver
+
+# exclude sqlite db file
+
+# excluse local *.json db files
+db.json
+
+# research docs
+zDocs
+

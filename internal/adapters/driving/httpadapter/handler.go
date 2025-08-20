@@ -31,7 +31,7 @@ func (h *Handler) SetupRoutes() http.Handler {
 	router.Use(middleware.Recoverer)
 
 	router.Get("/{resourceName}", h.GetAllRecords)
-	router.Get("/{resourceName}/{resourceID}", h.GetRecordByID)
+	router.Get("/{resourceName}/{recordID}", h.GetRecordByID)
 
 	return router
 }
@@ -67,9 +67,9 @@ func (h *Handler) GetAllRecords(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetRecordByID(w http.ResponseWriter, r *http.Request) {
 	resourceName := chi.URLParam(r, "resourceName")
-	resourceID := chi.URLParam(r, "resourceID")
+	recordID := chi.URLParam(r, "recordID")
 
-	record, err := h.resourceService.GetRecordByID(r.Context(), resourceName, resourceID)
+	record, err := h.resourceService.GetRecordByID(r.Context(), resourceName, recordID)
 	if err != nil {
 		if errors.Is(err, resource.ErrEmptyResourceName) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -88,7 +88,6 @@ func (h *Handler) GetRecordByID(w http.ResponseWriter, r *http.Request) {
 
 	opts := jsonv2.JoinOptions(jsontext.Multiline(true), jsontext.WithIndent("  "))
 	if err := jsonv2.MarshalWrite(w, record, opts); err != nil {
-		log.Printf("ERROR: Failed to encode response for '%s' with ID '%s': %v", resourceName, resourceID, err)
+		log.Printf("ERROR: Failed to encode response for '%s' with ID '%s': %v", resourceName, recordID, err)
 	}
-
 }

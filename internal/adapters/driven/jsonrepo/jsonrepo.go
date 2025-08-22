@@ -2,10 +2,10 @@ package jsonrepo
 
 import (
 	"context"
+	"log"
 
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
-	"errors"
 	"jsonserver/internal/core/domain"
 	"jsonserver/internal/core/service/resource"
 	"os"
@@ -17,20 +17,15 @@ import (
 type jsonRepository struct {
 	filename string
 	mu       sync.RWMutex
-	data     map[string][]domain.Record // in-memory cache
+	data     map[string]any // in-memory cache
 }
 
 var _ resource.Repository = (*jsonRepository)(nil)
 
-var (
-	ErrResourceNotFound = errors.New("resource not found in repository")
-	ErrRecordNotFound   = errors.New("record not found in memory")
-)
-
 func NewJsonRepository(filename string) (resource.Repository, error) {
 	repo := &jsonRepository{
 		filename: filename,
-		data:     make(map[string][]domain.Record),
+		data:     make(map[string]any),
 	}
 
 	repo.mu.Lock()
@@ -61,15 +56,7 @@ func (r *jsonRepository) load() error {
 		return nil
 	}
 
-	// TODO investigate if MarshalRead should replace all the below
-
-	var rawData map[string][]domain.Record
-	if err := jsonv2.Unmarshal(bytes, &rawData); err != nil {
-		return err
-	}
-
-	r.data = rawData
-	return nil
+	return jsonv2.Unmarshal(bytes, &r.data)
 }
 
 // persist writes the entire in-memory cache back to the JSON file
@@ -86,6 +73,25 @@ func (r *jsonRepository) persist() error {
 	return jsonv2.MarshalWrite(f, r.data, opts)
 }
 
+func (r *jsonRepository) GetResourceType(ctx context.Context, resourceName string) resource.ResourceType {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	data, hasData := r.data[resourceName]
+	if !hasData {
+		return resource.ResourceTypeUnknown
+	}
+
+	switch data.(type) {
+	case []any:
+		return resource.ResourceTypeCollection
+	case map[string]any:
+		return resource.ResourceTypeKeyedObject
+	default:
+		return resource.ResourceTypeSingular
+	}
+}
+
 func (r *jsonRepository) GetAllRecords(ctx context.Context, resourceName string) ([]domain.Record, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -96,26 +102,86 @@ func (r *jsonRepository) GetAllRecords(ctx context.Context, resourceName string)
 		return []domain.Record{}, nil
 	}
 
-	return data, nil
+	// account for the different data structures
+	switch value := data.(type) {
+
+	case []any:
+		log.Printf("GetAllRecords for %s: Found a collection.", resourceName)
+
+		result := make([]domain.Record, 0, len(value))
+
+		for _, item := range value {
+			if recordMap, ok := item.(map[string]any); ok {
+				result = append(result, domain.Record(recordMap))
+			} else {
+				log.Printf("WARN: non-object item found in collection: '%s'", resourceName)
+			}
+		}
+		return result, nil
+
+	case map[string]any:
+		log.Printf("GetAllRecords for %s: Found a keyed object. Transforming to a slice.", resourceName)
+
+		result := make([]domain.Record, 0, len(value))
+
+		for key, item := range value {
+			record := domain.Record{
+				"key":   key,
+				"value": item,
+			}
+			result = append(result, record)
+		}
+		return result, nil
+
+	default:
+		return []domain.Record{}, nil
+	}
+
 }
 
 func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, recordID string) (domain.Record, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	records, ok := r.data[resourceName]
+	data, ok := r.data[resourceName]
 	if !ok {
 		return nil, resource.ErrNotFound
 	}
 
-	for _, record := range records {
+	switch value := data.(type) {
+	case []any:
+		for _, item := range value {
 
-		if id, ok := record.ID(); ok && id == recordID {
+			if recordMap, ok := item.(map[string]any); ok {
+				record := domain.Record(recordMap)
+
+				if id, ok := record.ID(); ok && id == recordID {
+					return record, nil // we got it
+				}
+			}
+		}
+		return nil, resource.ErrNotFound
+
+	case map[string]any:
+		item, ok := value[recordID]
+		if !ok {
+			return nil, resource.ErrNotFound
+		}
+
+		if recordMap, ok := item.(map[string]any); ok {
+			record := domain.Record(recordMap)
+
+			if _, hasID := record.ID(); !hasID {
+				record["id"] = recordID
+			}
 			return record, nil
 		}
-	}
+		return nil, resource.ErrNotFound
 
-	return nil, resource.ErrNotFound
+	default:
+		// if we got this far, def not found
+		return nil, resource.ErrNotFound
+	}
 }
 
 // TODO implement remaining methods

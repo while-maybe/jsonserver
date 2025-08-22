@@ -8,11 +8,21 @@ import (
 
 var ErrNotFound = errors.New("record not found")
 
+type ResourceType int
+
+const (
+	ResourceTypeUnknown ResourceType = iota
+	ResourceTypeCollection
+	ResourceTypeKeyedObject
+	ResourceTypeSingular
+)
+
 type Repository interface {
 	// Queries
 	GetAllRecords(ctx context.Context, resourceName string) ([]domain.Record, error)
 	GetRecordByID(ctx context.Context, resourceName, recordID string) (domain.Record, error)
 	// Count(ctx context.Context, resourceName string) (int, error)
+	GetResourceType(ctx context.Context, resourceName string) ResourceType
 
 	// Commands for arrays (collections)
 	CreateRecord(ctx context.Context, resourceName string, recordData domain.Record) (domain.Record, error)

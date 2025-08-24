@@ -48,6 +48,9 @@ func (r *jsonRepository) load() error {
 
 	bytes, err := os.ReadFile(r.filename)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
 		return err
 	}
 
@@ -110,11 +113,18 @@ func (r *jsonRepository) GetAllRecords(ctx context.Context, resourceName string)
 
 		result := make([]domain.Record, 0, len(value))
 
-		for _, item := range value {
-			if recordMap, ok := item.(map[string]any); ok {
+		for i, item := range value {
+			if record, ok := item.(domain.Record); ok {
+				result = append(result, record)
+				log.Printf("GetAllRecords: Item %d: %+v", i, record)
+
+			} else if recordMap, ok := item.(map[string]any); ok {
+				// Handle records loaded from JSON (which come as map[string]any)
 				result = append(result, domain.Record(recordMap))
+				log.Printf("GetAllRecords: Item %d (converted from map): %+v", i, recordMap)
+
 			} else {
-				log.Printf("WARN: non-object item found in collection: '%s'", resourceName)
+				log.Printf("WARN: non-record item found in collection: '%s' at index %d, type: %T", resourceName, i, item)
 			}
 		}
 		return result, nil
@@ -180,16 +190,36 @@ func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 
 	default:
 		// if we got this far, def not found
-		return nil, resource.ErrNotFound
+		return nil, resource.ErrWrongResourceType
 	}
 }
 
-// TODO implement remaining methods
-
 func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, recordData domain.Record) (domain.Record, error) {
-	return nil, nil
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	data, hasData := r.data[resourceName]
+
+	if hasData {
+		collection, ok := data.([]any)
+
+		if !ok {
+			return nil, resource.ErrWrongResourceType
+
+		}
+		r.data[resourceName] = append(collection, recordData)
+
+	} else {
+		r.data[resourceName] = []any{recordData}
+	}
+
+	if err := r.persist(); err != nil {
+		return nil, err
+	}
+	return recordData, nil
 }
 
+// TODO implement remaining methods
 func (r *jsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, recordKey string, recordData domain.Record) (domain.Record, error) {
 	return nil, nil
 }

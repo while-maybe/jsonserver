@@ -94,6 +94,29 @@ func (r *jsonRepository) normaliseLoadedValue(value any) any {
 	}
 }
 
+func (r *jsonRepository) denormaliseForPersist(value any) any {
+	switch v := value.(type) {
+	case []any:
+		denormalizedSlice := make([]any, len(v))
+
+		// convert back to map[string]any
+		for i, item := range v {
+			if itemMap, ok := item.(domain.Record); ok {
+				denormalizedSlice[i] = map[string]any(itemMap)
+
+			} else {
+				// non-map items are kept as is
+				denormalizedSlice[i] = item
+			}
+		}
+		return denormalizedSlice
+
+	default:
+		// Keep keyed objects and singular values as-is
+		return v
+	}
+}
+
 // persist writes the entire in-memory cache back to the JSON file
 func (r *jsonRepository) persist() error {
 
@@ -103,9 +126,14 @@ func (r *jsonRepository) persist() error {
 	}
 	defer f.Close()
 
+	denormalisedData := make(map[string]any)
+	for resourceName, resourceValue := range r.data {
+		denormalisedData[resourceName] = r.denormaliseForPersist(resourceValue)
+	}
+
 	opts := jsonv2.JoinOptions(jsontext.Multiline(true), jsontext.WithIndent("  "))
 
-	return jsonv2.MarshalWrite(f, r.data, opts)
+	return jsonv2.MarshalWrite(f, denormalisedData, opts)
 }
 
 func (r *jsonRepository) GetResourceType(ctx context.Context, resourceName string) resource.ResourceType {

@@ -59,7 +59,39 @@ func (r *jsonRepository) load() error {
 		return nil
 	}
 
-	return jsonv2.Unmarshal(bytes, &r.data)
+	var temp map[string]any
+	if err := jsonv2.Unmarshal(bytes, &temp); err != nil {
+		return err
+	}
+
+	for resourceName, resourceValue := range temp {
+		r.data[resourceName] = r.normaliseLoadedValue(resourceValue)
+	}
+
+	return nil
+}
+
+func (r *jsonRepository) normaliseLoadedValue(value any) any {
+	switch v := value.(type) {
+	case []any:
+		// this is a collection
+		normalisedSlice := make([]any, len(v))
+
+		for i, item := range v {
+			if itemMap, ok := item.(map[string]any); ok {
+				normalisedSlice[i] = domain.Record(itemMap)
+
+			} else {
+				// non-map items are kept as is
+				normalisedSlice[i] = item
+			}
+		}
+		return normalisedSlice
+
+	default:
+		// Keep keyed objects and singular values as-is
+		return v
+	}
 }
 
 // persist writes the entire in-memory cache back to the JSON file
@@ -118,11 +150,6 @@ func (r *jsonRepository) GetAllRecords(ctx context.Context, resourceName string)
 				result = append(result, record)
 				log.Printf("GetAllRecords: Item %d: %+v", i, record)
 
-			} else if recordMap, ok := item.(map[string]any); ok {
-				// Handle records loaded from JSON (which come as map[string]any)
-				result = append(result, domain.Record(recordMap))
-				log.Printf("GetAllRecords: Item %d (converted from map): %+v", i, recordMap)
-
 			} else {
 				log.Printf("WARN: non-record item found in collection: '%s' at index %d, type: %T", resourceName, i, item)
 			}
@@ -162,11 +189,10 @@ func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 	case []any:
 		for _, item := range value {
 
-			if recordMap, ok := item.(map[string]any); ok {
-				record := domain.Record(recordMap)
+			if record, ok := item.(domain.Record); ok {
 
 				if id, ok := record.ID(); ok && id == recordID {
-					return record, nil // we got it
+					return record, nil
 				}
 			}
 		}

@@ -207,6 +207,20 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 			return nil, resource.ErrWrongResourceType
 
 		}
+
+		if newID, hasID := recordData.ID(); hasID {
+			for _, item := range collection {
+
+				if existingRecord, ok := item.(domain.Record); ok {
+
+					if existingID, hasExistingID := existingRecord.ID(); hasExistingID && existingID == newID {
+
+						return nil, resource.ErrDuplicateID
+					}
+				}
+			}
+		}
+
 		r.data[resourceName] = append(collection, recordData)
 
 	} else {

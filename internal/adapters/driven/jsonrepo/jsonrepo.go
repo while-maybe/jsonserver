@@ -2,7 +2,9 @@ package jsonrepo
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"maps"
 
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
@@ -141,12 +143,8 @@ func (r *jsonRepository) denormaliseForPersist(value any) any {
 	}
 }
 
-func (r *jsonRepository) GetResourceType(ctx context.Context, resourceName string) resource.ResourceType {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	data, hasData := r.data[resourceName]
-	if !hasData {
+func (r *jsonRepository) getResourceType(data any) resource.ResourceType {
+	if data == nil {
 		return resource.ResourceTypeUnknown
 	}
 
@@ -160,6 +158,13 @@ func (r *jsonRepository) GetResourceType(ctx context.Context, resourceName strin
 	}
 }
 
+func (r *jsonRepository) GetResourceType(ctx context.Context, resourceName string) resource.ResourceType {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return r.getResourceType(r.data[resourceName])
+}
+
 func (r *jsonRepository) GetAllRecords(ctx context.Context, resourceName string) ([]domain.Record, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -170,7 +175,8 @@ func (r *jsonRepository) GetAllRecords(ctx context.Context, resourceName string)
 		return []domain.Record{}, nil
 	}
 
-	// account for the different data structures
+	// Use direct type switches in methods that need to work with the data  to avoid redundant type assertions and improve readability: The getResourceType helper is reserved for the public API.
+	// if we did switch r.getResourceType(data) we'd have to manually assert again
 	switch value := data.(type) {
 
 	case []any:
@@ -179,10 +185,9 @@ func (r *jsonRepository) GetAllRecords(ctx context.Context, resourceName string)
 		for i, item := range value {
 			if record, ok := item.(domain.Record); ok {
 				result = append(result, record)
-				log.Printf("GetAllRecords: Item %d: %+v", i, record)
 
 			} else {
-				log.Printf("WARN: non-record item found in collection: '%s' at index %d, type: %T", resourceName, i, item)
+				log.Printf("WARN: non-record item found in collection: '%s' at index %v, type: %T", resourceName, i, item)
 			}
 		}
 		return result, nil
@@ -214,6 +219,8 @@ func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 		return nil, resource.ErrNotFound
 	}
 
+	// Use direct type switches in methods that need to work with the data  to avoid redundant type assertions and improve readability: The getResourceType helper is reserved for the public API.
+	// if we did switch r.getResourceType(data) we'd have to manually assert again
 	switch value := data.(type) {
 	case []any:
 		for _, item := range value {
@@ -234,12 +241,16 @@ func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 		}
 
 		if recordMap, ok := item.(map[string]any); ok {
-			record := domain.Record(recordMap)
 
-			if _, hasID := record.ID(); !hasID {
-				record["id"] = recordID
+			newRecord := make(domain.Record, len(recordMap)+1)
+
+			// A shallow copy is a better choice otherwise we'd be modifying the recordMap under a Rlock() -  as of 1.21, maps.Copy replaces the need for a loop
+			maps.Copy(newRecord, recordMap)
+
+			if _, hasID := newRecord.ID(); !hasID {
+				newRecord.SetID(recordID)
 			}
-			return record, nil
+			return newRecord, nil
 		}
 		return nil, resource.ErrNotFound
 
@@ -250,6 +261,15 @@ func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 }
 
 func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, recordData domain.Record) (domain.Record, error) {
+	if err := recordData.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %s", resource.ErrInvalidRecord, err.Error())
+	}
+
+	newID, hasID := recordData.ID()
+	if !hasID {
+		return nil, fmt.Errorf("%w: records in a collection must have a valid ID", resource.ErrInvalidRecord)
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -268,20 +288,16 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 	}
 
 	collection, ok := data.([]any)
-
 	if !ok {
 		return nil, resource.ErrWrongResourceType
 	}
 
-	if newID, hasID := recordData.ID(); hasID {
-		for _, item := range collection {
+	for _, item := range collection {
 
-			if existingRecord, ok := item.(domain.Record); ok {
+		if existingRecord, ok := item.(domain.Record); ok {
 
-				if existingID, hasExistingID := existingRecord.ID(); hasExistingID && existingID == newID {
-
-					return nil, resource.ErrDuplicateID
-				}
+			if existingID, hasExistingID := existingRecord.ID(); hasExistingID && existingID == newID {
+				return nil, resource.ErrDuplicateID
 			}
 		}
 	}
@@ -290,7 +306,7 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 	r.data[resourceName] = newCollection
 
 	if err := r.persist(); err != nil {
-		// revert changes if not possible to save to file - expensive op?
+		// revert changes if not possible to save to file
 		r.data[resourceName] = collection
 
 		log.Printf("Failed to persist data to %s: %v", r.filename, err)

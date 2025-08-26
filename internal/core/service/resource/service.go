@@ -19,6 +19,7 @@ var (
 	ErrWrongResourceType = errors.New("operation not valid for this resource type")
 	ErrResourceNotFound  = errors.New("top-level resource not found")
 	ErrRecordNotFound    = errors.New("record not found")
+	ErrInvalidRecord     = errors.New("record is invalid")
 )
 
 type resourceService struct {
@@ -98,7 +99,7 @@ func (s *resourceService) CreateRecordInCollection(ctx context.Context, resource
 		if err != nil {
 			return nil, fmt.Errorf("CreateRecordInCollection: could not generate uuid %w", err)
 		}
-		newRecord["id"] = newUUID.String()
+		newRecord.SetID(newUUID.String())
 	}
 
 	// if still here then create the record

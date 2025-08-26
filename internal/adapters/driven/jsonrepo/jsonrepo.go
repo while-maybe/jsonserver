@@ -255,35 +255,44 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 
 	data, hasData := r.data[resourceName]
 
-	if hasData {
-		collection, ok := data.([]any)
+	if !hasData {
+		r.data[resourceName] = []any{recordData}
 
-		if !ok {
-			return nil, resource.ErrWrongResourceType
+		if err := r.persist(); err != nil {
 
+			// revert the change if saving to file fails
+			delete(r.data, resourceName)
+			return nil, err
 		}
+		return recordData, nil
+	}
 
-		if newID, hasID := recordData.ID(); hasID {
-			for _, item := range collection {
+	collection, ok := data.([]any)
 
-				if existingRecord, ok := item.(domain.Record); ok {
+	if !ok {
+		return nil, resource.ErrWrongResourceType
+	}
 
-					if existingID, hasExistingID := existingRecord.ID(); hasExistingID && existingID == newID {
+	if newID, hasID := recordData.ID(); hasID {
+		for _, item := range collection {
 
-						return nil, resource.ErrDuplicateID
-					}
+			if existingRecord, ok := item.(domain.Record); ok {
+
+				if existingID, hasExistingID := existingRecord.ID(); hasExistingID && existingID == newID {
+
+					return nil, resource.ErrDuplicateID
 				}
 			}
 		}
-
-		newCollection := append(collection, recordData)
-		r.data[resourceName] = newCollection
-
-	} else {
-		r.data[resourceName] = []any{recordData}
 	}
 
+	newCollection := append(collection, recordData)
+	r.data[resourceName] = newCollection
+
 	if err := r.persist(); err != nil {
+		// revert changes if not possible to save to file - expensive op?
+		r.data[resourceName] = collection
+
 		log.Printf("Failed to persist data to %s: %v", r.filename, err)
 		return nil, err
 	}

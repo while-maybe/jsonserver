@@ -71,52 +71,6 @@ func (r *jsonRepository) load() error {
 	return nil
 }
 
-func (r *jsonRepository) normaliseLoadedValue(value any) any {
-	switch v := value.(type) {
-	case []any:
-		// this is a collection
-		normalisedSlice := make([]any, len(v))
-
-		for i, item := range v {
-			if itemMap, ok := item.(map[string]any); ok {
-				normalisedSlice[i] = domain.Record(itemMap)
-
-			} else {
-				// non-map items are kept as is
-				normalisedSlice[i] = item
-			}
-		}
-		return normalisedSlice
-
-	default:
-		// Keep keyed objects and singular values as-is
-		return v
-	}
-}
-
-func (r *jsonRepository) denormaliseForPersist(value any) any {
-	switch v := value.(type) {
-	case []any:
-		denormalizedSlice := make([]any, len(v))
-
-		// convert back to map[string]any
-		for i, item := range v {
-			if itemMap, ok := item.(domain.Record); ok {
-				denormalizedSlice[i] = map[string]any(itemMap)
-
-			} else {
-				// non-map items are kept as is
-				denormalizedSlice[i] = item
-			}
-		}
-		return denormalizedSlice
-
-	default:
-		// Keep keyed objects and singular values as-is
-		return v
-	}
-}
-
 // persist writes the entire in-memory cache back to the JSON file
 func (r *jsonRepository) persist() error {
 
@@ -134,6 +88,57 @@ func (r *jsonRepository) persist() error {
 	opts := jsonv2.JoinOptions(jsontext.Multiline(true), jsontext.WithIndent("  "))
 
 	return jsonv2.MarshalWrite(f, denormalisedData, opts)
+}
+
+// transformSliceItems takes a collection and applies a transformer function to each item returning a same length collection - think .map() in JS
+func (r *jsonRepository) transformSliceItems(slice []any, transformer func(any) any) []any {
+	result := make([]any, len(slice))
+
+	for i, item := range slice {
+		result[i] = transformer(item)
+	}
+
+	return result
+}
+
+func (r *jsonRepository) normaliseLoadedValue(value any) any {
+	switch v := value.(type) {
+	case []any:
+
+		op := func(item any) any {
+			if itemMap, ok := item.(map[string]any); ok {
+				return domain.Record(itemMap)
+			}
+
+			// non-map items are kept as is
+			return item
+		}
+		return r.transformSliceItems(v, op)
+
+	default:
+		// Keep keyed objects and singular values as-is
+		return v
+	}
+}
+
+func (r *jsonRepository) denormaliseForPersist(value any) any {
+	switch v := value.(type) {
+	case []any:
+
+		op := func(item any) any {
+			if itemMap, ok := item.(domain.Record); ok {
+				return map[string]any(itemMap)
+			}
+
+			// non-map items are kept as is
+			return item
+		}
+		return r.transformSliceItems(v, op)
+
+	default:
+		// Keep keyed objects and singular values as-is
+		return v
+	}
 }
 
 func (r *jsonRepository) GetResourceType(ctx context.Context, resourceName string) resource.ResourceType {
@@ -169,8 +174,6 @@ func (r *jsonRepository) GetAllRecords(ctx context.Context, resourceName string)
 	switch value := data.(type) {
 
 	case []any:
-		log.Printf("GetAllRecords for %s: Found a collection.", resourceName)
-
 		result := make([]domain.Record, 0, len(value))
 
 		for i, item := range value {
@@ -185,8 +188,6 @@ func (r *jsonRepository) GetAllRecords(ctx context.Context, resourceName string)
 		return result, nil
 
 	case map[string]any:
-		log.Printf("GetAllRecords for %s: Found a keyed object. Transforming to a slice.", resourceName)
-
 		result := make([]domain.Record, 0, len(value))
 
 		for key, item := range value {
@@ -275,13 +276,15 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 			}
 		}
 
-		r.data[resourceName] = append(collection, recordData)
+		newCollection := append(collection, recordData)
+		r.data[resourceName] = newCollection
 
 	} else {
 		r.data[resourceName] = []any{recordData}
 	}
 
 	if err := r.persist(); err != nil {
+		log.Printf("Failed to persist data to %s: %v", r.filename, err)
 		return nil, err
 	}
 	return recordData, nil

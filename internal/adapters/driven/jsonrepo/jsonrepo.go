@@ -315,7 +315,52 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 	return recordData, nil
 }
 
-// TODO implement remaining methods
 func (r *jsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, recordKey string, recordData domain.Record) (domain.Record, error) {
-	return nil, nil
+	if err := recordData.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %s", resource.ErrInvalidRecord, err.Error())
+	}
+
+	if recordKey == "" {
+		return nil, resource.ErrEmptyRecordKey
+	}
+
+	recordToStore := make(domain.Record, len(recordData))
+	maps.Copy(recordToStore, recordData)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	var originalResource any
+	var resourceExists bool
+	originalResource, resourceExists = r.data[resourceName]
+
+	keyedObject, isMap := originalResource.(map[string]any)
+	// the resource already exists but it's not a map
+	if !isMap && resourceExists {
+		return nil, resource.ErrWrongResourceType
+	}
+
+	// resource did not exist, create it
+	if !resourceExists {
+		keyedObject = make(map[string]any)
+	}
+
+	keyedObject[recordKey] = recordToStore
+	r.data[resourceName] = keyedObject
+
+	if err := r.persist(); err != nil {
+		// revert changes if not possible to save to file
+		if !resourceExists {
+			delete(r.data, resourceName)
+		} else {
+			r.data[resourceName] = originalResource
+		}
+
+		log.Printf("Failed to persist data to %s: %v", r.filename, err)
+		return nil, err
+	}
+
+	return recordToStore, nil
 }
+
+// TODO implement remaining methods

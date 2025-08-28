@@ -315,17 +315,27 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 	return recordData, nil
 }
 
-func (r *jsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, recordKey string, recordData domain.Record) (domain.Record, error) {
+func (r *jsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, recordKey string, recordData domain.Record) (domain.Record, bool, error) {
+	wasCreated := false
+
 	if err := recordData.Validate(); err != nil {
-		return nil, fmt.Errorf("%w: %s", resource.ErrInvalidRecord, err.Error())
+		return nil, wasCreated, fmt.Errorf("%w: %s", resource.ErrInvalidRecord, err.Error())
 	}
 
 	if recordKey == "" {
-		return nil, resource.ErrEmptyRecordKey
+		return nil, wasCreated, resource.ErrEmptyRecordKey
+	}
+
+	if resourceName == "" {
+		return nil, false, resource.ErrInvalidResourceName
 	}
 
 	recordToStore := make(domain.Record, len(recordData))
 	maps.Copy(recordToStore, recordData)
+
+	const IDField = "id"
+	// Remove ID field since keyed objects use the key as the identifier
+	delete(recordToStore, IDField)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -337,13 +347,17 @@ func (r *jsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 	keyedObject, isMap := originalResource.(map[string]any)
 	// the resource already exists but it's not a map
 	if !isMap && resourceExists {
-		return nil, resource.ErrWrongResourceType
+		return nil, wasCreated, resource.ErrWrongResourceType
 	}
 
 	// resource did not exist, create it
 	if !resourceExists {
 		keyedObject = make(map[string]any)
 	}
+
+	// we need this so that we return the correct wasCreated bool as it will determine returned http.StatusCode (201 vs 200) in the handler
+	_, keyExisted := keyedObject[recordKey]
+	wasCreated = !keyExisted
 
 	keyedObject[recordKey] = recordToStore
 	r.data[resourceName] = keyedObject
@@ -357,10 +371,10 @@ func (r *jsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 		}
 
 		log.Printf("Failed to persist data to %s: %v", r.filename, err)
-		return nil, err
+		return nil, wasCreated, err
 	}
 
-	return recordToStore, nil
+	return recordToStore, wasCreated, nil
 }
 
 // TODO implement remaining methods

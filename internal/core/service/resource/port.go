@@ -18,7 +18,7 @@ type Service interface {
 	// DeleteRecordInCollection(ctx context.Context, resourceName string, recordID string) error
 
 	// Commands for (keyed) objects
-	CreateOrUpdateRecordInObject(ctx context.Context, resourceName, recordKey string, data map[string]any) (domain.Record, error)
+	UpsertRecordInObject(ctx context.Context, resourceName, recordKey string, data map[string]any) (domain.Record, bool, error)
 	// DeleteRecordInObject(ctx context.Context, resourceName, recordKey string) error
 
 	// Commands for singular resources like ints, str

@@ -30,7 +30,7 @@ type Repository interface {
 	// Delete(ctx context.Context, resourceName, recordID string) error
 
 	// Commands for (keyed) objects
-	UpsertRecordByKey(ctx context.Context, resourceName, recordKey string, recordData domain.Record) (domain.Record, error)
+	UpsertRecordByKey(ctx context.Context, resourceName, recordKey string, recordData domain.Record) (domain.Record, bool, error)
 	// DeleteRecordByKey(ctx context.Context, resourceName, recordKey string) error
 
 	// Commands for singular resources like ints, str

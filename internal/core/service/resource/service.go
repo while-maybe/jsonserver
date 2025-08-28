@@ -10,16 +10,17 @@ import (
 )
 
 var (
-	ErrDuplicateID       = errors.New("record with this ID already exists")
-	ErrEmptyRecordID     = errors.New("record ID canno be empty")
-	ErrNoDataProvided    = errors.New("no data provided")
-	ErrEmptyRecordKey    = errors.New("record key cannot be empty")
-	ErrEmptyResourceName = errors.New("resource name cannot be empty")
-	ErrGettingAllRecords = errors.New("cannot get all records")
-	ErrWrongResourceType = errors.New("operation not valid for this resource type")
-	ErrResourceNotFound  = errors.New("top-level resource not found")
-	ErrRecordNotFound    = errors.New("record not found")
-	ErrInvalidRecord     = errors.New("record is invalid")
+	ErrDuplicateID         = errors.New("record with this ID already exists")
+	ErrEmptyRecordID       = errors.New("record ID canno be empty")
+	ErrNoDataProvided      = errors.New("no data provided")
+	ErrEmptyRecordKey      = errors.New("record key cannot be empty")
+	ErrEmptyResourceName   = errors.New("resource name cannot be empty")
+	ErrGettingAllRecords   = errors.New("cannot get all records")
+	ErrWrongResourceType   = errors.New("operation not valid for this resource type")
+	ErrResourceNotFound    = errors.New("top-level resource not found")
+	ErrRecordNotFound      = errors.New("record not found")
+	ErrInvalidRecord       = errors.New("record is invalid")
+	ErrInvalidResourceName = errors.New("resource name is invalid")
 )
 
 type resourceService struct {
@@ -111,26 +112,28 @@ func (s *resourceService) CreateRecordInCollection(ctx context.Context, resource
 	return result, nil
 }
 
-func (s *resourceService) CreateOrUpdateRecordInObject(ctx context.Context, resourceName, recordKey string, data map[string]any) (domain.Record, error) {
+func (s *resourceService) UpsertRecordInObject(ctx context.Context, resourceName, recordKey string, data map[string]any) (domain.Record, bool, error) {
+	wasCreated := false
 	// validate
 	if len(data) == 0 {
-		return nil, fmt.Errorf("CreateOrUpdateRecordInObject: %w", ErrNoDataProvided)
+		return nil, wasCreated, fmt.Errorf("UpsertRecordInObject: %w", ErrNoDataProvided)
 	}
 	if recordKey == "" {
-		return nil, fmt.Errorf("CreateOrUpdateRecordInObject: %w", ErrEmptyRecordKey)
+		return nil, wasCreated, fmt.Errorf("UpsertRecordInObject: %w", ErrEmptyRecordKey)
 	}
 
 	// create a new object record
 	newRecord, err := domain.NewFromMap(data)
 	if err != nil {
-		return nil, fmt.Errorf("CreateRecordInCollection: invalid data format: %w", err)
+		return nil, wasCreated, ErrInvalidRecord
 	}
 
 	// if still here then create the record
-	result, err := s.resourceRepo.UpsertRecordByKey(ctx, resourceName, recordKey, newRecord)
+	var result domain.Record
+	result, wasCreated, err = s.resourceRepo.UpsertRecordByKey(ctx, resourceName, recordKey, newRecord)
 	if err != nil {
-		return nil, fmt.Errorf("CreateRecordInCollection: could not save to repository: %w", err)
+		return nil, wasCreated, fmt.Errorf("UpsertRecordInObject: could not save to repository: %w", err)
 	}
 
-	return result, nil
+	return result, wasCreated, nil
 }

@@ -87,7 +87,7 @@ func (s *resourceService) CreateRecordInCollection(ctx context.Context, resource
 			return nil, fmt.Errorf("%w: %s", ErrDuplicateID, recordID)
 		}
 
-		// If an error occurred, we must ensure it was ErrNotFound. Any other error is a system failure.
+		// If an error occurred, we must ensure it was NOT ErrNotFound. Any other error is a system failure.
 		if !errors.Is(err, ErrNotFound) {
 			return nil, fmt.Errorf("failed to check for duplicate ID: %w", err)
 		}

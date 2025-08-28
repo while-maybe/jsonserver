@@ -143,9 +143,6 @@ func (h *Handler) HandleCreateRecord(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, resource.ErrDuplicateID):
 			httpStatusCode = http.StatusConflict
 
-		case errors.Is(err, resource.ErrNotFound):
-			httpStatusCode = http.StatusNotFound
-
 		default:
 			log.Printf("ERROR: Unhandled error from service: %v", err)
 			httpStatusCode = http.StatusInternalServerError

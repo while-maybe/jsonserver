@@ -158,6 +158,21 @@ func (r *jsonRepository) getResourceType(data any) resource.ResourceType {
 	}
 }
 
+func (r *jsonRepository) findRecordByID(collection []any, recordID string) (domain.Record, int) {
+
+	for i, item := range collection {
+
+		if record, ok := item.(domain.Record); ok {
+
+			if id, ok := record.ID(); ok && id == recordID {
+				return record, i
+			}
+		}
+	}
+
+	return nil, -1
+}
+
 func (r *jsonRepository) GetResourceType(ctx context.Context, resourceName string) resource.ResourceType {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -223,16 +238,13 @@ func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 	// if we did switch r.getResourceType(data) we'd have to manually assert again
 	switch value := data.(type) {
 	case []any:
-		for _, item := range value {
 
-			if record, ok := item.(domain.Record); ok {
-
-				if id, ok := record.ID(); ok && id == recordID {
-					return record, nil
-				}
-			}
+		record, targetIndex := r.findRecordByID(value, recordID)
+		if targetIndex == -1 {
+			return nil, resource.ErrNotFound
 		}
-		return nil, resource.ErrNotFound
+
+		return record, nil
 
 	case map[string]any:
 		item, ok := value[recordID]
@@ -240,7 +252,7 @@ func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 			return nil, resource.ErrNotFound
 		}
 
-		if recordMap, ok := item.(map[string]any); ok {
+		if recordMap, ok := item.(domain.Record); ok {
 
 			newRecord := make(domain.Record, len(recordMap)+1)
 
@@ -252,7 +264,10 @@ func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 			}
 			return newRecord, nil
 		}
-		return nil, resource.ErrNotFound
+
+		log.Printf(
+			"FATAL: Data corruption detected in resource '%s'. Key '%s' should be a domain.Record but is type %T.", resourceName, recordID, item)
+		return nil, resource.ErrInternal
 
 	default:
 		// if we got this far, def not found
@@ -303,6 +318,7 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 	}
 
 	newCollection := append(collection, recordData)
+
 	r.data[resourceName] = newCollection
 
 	if err := r.persist(); err != nil {
@@ -400,18 +416,7 @@ func (r *jsonRepository) DeleteRecordFromCollection(ctx context.Context, resourc
 		return resource.ErrWrongResourceType
 	}
 
-	targetIndex := -1
-	for i, item := range collection {
-
-		if record, ok := item.(domain.Record); ok {
-
-			if id, ok := record.ID(); ok && id == recordID {
-				targetIndex = i
-				break
-			}
-		}
-	}
-
+	_, targetIndex := r.findRecordByID(collection, recordID)
 	if targetIndex == -1 {
 		return resource.ErrNotFound
 	}

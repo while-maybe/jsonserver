@@ -137,3 +137,17 @@ func (s *resourceService) UpsertRecordInObject(ctx context.Context, resourceName
 
 	return result, wasCreated, nil
 }
+
+func (s *resourceService) DeleteRecordFromCollection(ctx context.Context, resourceName string, recordID string) error {
+	if resourceName == "" {
+		return ErrEmptyResourceName
+	}
+
+	if recordID == "" {
+		return ErrEmptyRecordID
+	}
+
+	s.resourceRepo.GetRecordByID(ctx, resourceName, recordID)
+
+	return nil
+}

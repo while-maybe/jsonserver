@@ -327,7 +327,7 @@ func (r *jsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 	}
 
 	if resourceName == "" {
-		return nil, false, resource.ErrInvalidResourceName
+		return nil, wasCreated, resource.ErrInvalidResourceName
 	}
 
 	recordToStore := make(domain.Record, len(recordData))
@@ -375,6 +375,59 @@ func (r *jsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 	}
 
 	return recordToStore, wasCreated, nil
+}
+
+func (r *jsonRepository) DeleteRecordFromCollection(ctx context.Context, resourceName, recordID string) error {
+
+	if recordID == "" {
+		return resource.ErrEmptyRecordID
+	}
+
+	if resourceName == "" {
+		return resource.ErrInvalidResourceName
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	data, ok := r.data[resourceName]
+	if !ok {
+		return resource.ErrNotFound
+	}
+
+	collection, isCollection := data.([]any)
+	if !isCollection {
+		return resource.ErrWrongResourceType
+	}
+
+	targetIndex := -1
+	for i, item := range collection {
+
+		if record, ok := item.(domain.Record); ok {
+
+			if id, ok := record.ID(); ok && id == recordID {
+				targetIndex = i
+				break
+			}
+		}
+	}
+
+	if targetIndex == -1 {
+		return resource.ErrNotFound
+	}
+
+	newCollection := append(collection[:targetIndex], collection[targetIndex+1:]...)
+	r.data[resourceName] = newCollection
+
+	if err := r.persist(); err != nil {
+
+		r.data[resourceName] = collection
+
+		log.Printf("Failed to persist data to %s: %v", r.filename, err)
+		return err
+	}
+
+	return nil
 }
 
 // TODO implement remaining methods

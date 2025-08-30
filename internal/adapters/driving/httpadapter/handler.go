@@ -55,9 +55,14 @@ func (h *Handler) handleError(w http.ResponseWriter, err error) {
 	case errors.Is(err, resource.ErrWrongResourceType), errors.Is(err, resource.ErrDuplicateID):
 		httpStatusCode = http.StatusConflict
 
+	// Not implemented by the server
+	case errors.Is(err, resource.ErrUnknownResourceType):
+		log.Printf("FATAL LOGIC ERROR: Handler is not aware of a resource type: %v", err)
+		httpStatusCode = http.StatusNotImplemented
+
 	// Default to Server Error
 	default:
-		log.Printf("ERROR: Unhandled error from service: %v", err)
+		log.Printf("ERROR: Unhandled internal error from service: %v", err)
 		httpStatusCode = http.StatusInternalServerError
 	}
 
@@ -90,8 +95,7 @@ func (h *Handler) SetupRoutes() http.Handler {
 		r.Put("/{resourceName}/{recordKey}", h.HandleUpsertRecordByKey)
 	})
 
-	router.Delete("/{resourceName}/{recordID}", h.HandleDeleteRecordByID)
-
+	router.Delete("/{resourceName}/{identifier}", h.HandleDelete)
 	return router
 }
 
@@ -211,27 +215,51 @@ func (h *Handler) HandleUpsertRecordByKey(w http.ResponseWriter, r *http.Request
 	h.respondWithJSON(w, successStatusCode, record)
 }
 
-func (h *Handler) HandleDeleteRecordByID(w http.ResponseWriter, r *http.Request) {
-	resourceName := chi.URLParam(r, "resourceName")
-	recordID := chi.URLParam(r, "recordID")
-
-	if resourceName == "" || recordID == "" {
-		http.Error(w, "Resource name and record key are required", http.StatusBadRequest)
-		return
-	}
-
-	resourceType := h.resourceService.CheckResourceType(r.Context(), resourceName)
-
-	if resourceType != resource.ResourceTypeUnknown && resourceType != resource.ResourceTypeCollection {
-		http.Error(w, "Method DELETE by ID is not allowed on keyed-object or singular resources.", http.StatusMethodNotAllowed)
-		return
-	}
-
+func (h *Handler) handleDeleteRecordByID(w http.ResponseWriter, r *http.Request, resourceName, recordID string) {
 	err := h.resourceService.DeleteRecordFromCollection(r.Context(), resourceName, recordID)
 	if err != nil {
 		h.handleError(w, err)
 		return
 	}
-
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) handleDeleteRecordByKey(w http.ResponseWriter, r *http.Request, resourceName, recordKey string) {
+	err := h.resourceService.DeleteRecordInObject(r.Context(), resourceName, recordKey)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
+	resourceName := chi.URLParam(r, "resourceName")
+	identifier := chi.URLParam(r, "identifier")
+
+	if resourceName == "" || identifier == "" {
+		http.Error(w, "Resource name and identifier are required", http.StatusBadRequest)
+		return
+	}
+
+	resourceType := h.resourceService.CheckResourceType(r.Context(), resourceName)
+
+	switch resourceType {
+
+	case resource.ResourceTypeCollection:
+		h.handleDeleteRecordByID(w, r, resourceName, identifier)
+
+	case resource.ResourceTypeKeyedObject:
+		h.handleDeleteRecordByKey(w, r, resourceName, identifier)
+
+	case resource.ResourceTypeSingular:
+		// TODO implement singular entries
+		h.handleDeleteRecordByKey(w, r, resourceName, identifier)
+
+	case resource.ResourceTypeUnknown:
+		h.handleError(w, resource.ErrResourceNotFound)
+	default:
+		h.handleError(w, resource.ErrUnknownResourceType)
+
+	}
 }

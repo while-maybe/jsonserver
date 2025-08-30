@@ -10,6 +10,7 @@ var (
 	ErrEmptyResourceName   = errors.New("resource name cannot be empty")
 	ErrGettingAllRecords   = errors.New("cannot get all records")
 	ErrWrongResourceType   = errors.New("operation not valid for this resource type")
+	ErrUnknownResourceType = errors.New("unknown resource type")
 	ErrResourceNotFound    = errors.New("top-level resource not found")
 	ErrRecordNotFound      = errors.New("record not found")
 	ErrInvalidRecord       = errors.New("record is invalid")

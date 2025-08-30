@@ -28,6 +28,15 @@ func NewHandler(svc resource.Service) *Handler {
 	}
 }
 
+func (h *Handler) decodeJSON(w http.ResponseWriter, r *http.Request, data any) error {
+	if err := jsonv2.UnmarshalRead(r.Body, data); err != nil {
+		log.Printf("ERROR: Failed to decode request body: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return err
+	}
+	return nil
+}
+
 func (h *Handler) respondWithJSON(w http.ResponseWriter, responseCode int, data any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(responseCode)
@@ -69,44 +78,29 @@ func (h *Handler) handleError(w http.ResponseWriter, err error) {
 	http.Error(w, err.Error(), httpStatusCode)
 }
 
-func RequestSizeLimit(maxSize int64) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			r.Body = http.MaxBytesReader(w, r.Body, maxSize)
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
 func (h *Handler) SetupRoutes() http.Handler {
 	router := chi.NewRouter()
 
 	router.Use(middleware.Logger)
 	router.Use(middleware.Recoverer)
 
-	router.Get("/{resourceName}", h.HandleGetAllRecords)
-	router.Get("/{resourceName}/{recordID}", h.HandleGetRecordByID)
+	router.With(RequireURLParams("resourceName")).Get("/{resourceName}", h.HandleGetAllRecords)
+	router.With(RequireURLParams("resourceName", "recordID")).Get("/{resourceName}/{recordID}", h.HandleGetRecordByID)
 
 	// write operations will have size limits
 	router.Group(func(r chi.Router) {
 		r.Use(RequestSizeLimit(MaxRequestSize)) // enforce MaxRequestSize limit
-		r.Post("/{resourceName}", h.HandleCreateRecord)
-		r.Put("/{resourceName}/{recordKey}", h.HandleUpsertRecordByKey)
+		r.With(RequireURLParams("resourceName")).Post("/{resourceName}", h.HandleCreateRecord)
+		r.With(RequireURLParams("resourceName", "recordKey")).Put("/{resourceName}/{recordKey}", h.HandleUpsertRecordByKey)
 	})
 
-	router.Delete("/{resourceName}/{identifier}", h.HandleDelete)
+	router.With(RequireURLParams("resourceName", "identifier")).Delete("/{resourceName}/{identifier}", h.HandleDelete)
 	return router
 }
 
 func (h *Handler) HandleGetAllRecords(w http.ResponseWriter, r *http.Request) {
 	// cleanly extract the URL parameter
 	resourceName := chi.URLParam(r, "resourceName")
-
-	if resourceName == "" {
-		http.Error(w, "Resource name is required", http.StatusBadRequest)
-		return
-	}
 
 	// call the core service
 	records, err := h.resourceService.GetAllRecords(r.Context(), resourceName)
@@ -126,11 +120,6 @@ func (h *Handler) HandleGetRecordByID(w http.ResponseWriter, r *http.Request) {
 	resourceName := chi.URLParam(r, "resourceName")
 	recordID := chi.URLParam(r, "recordID")
 
-	if resourceName == "" || recordID == "" {
-		http.Error(w, "Resource name and record key are required", http.StatusBadRequest)
-		return
-	}
-
 	record, err := h.resourceService.GetRecordByID(r.Context(), resourceName, recordID)
 	if err != nil {
 		h.handleError(w, err)
@@ -144,11 +133,6 @@ func (h *Handler) HandleCreateRecord(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close() // needs to happen before as if UnmarshallRead below fails and returns, this never happens
 	resourceName := chi.URLParam(r, "resourceName")
 
-	if resourceName == "" {
-		http.Error(w, "Resource name is required", http.StatusBadRequest)
-		return
-	}
-
 	resourceType := h.resourceService.CheckResourceType(r.Context(), resourceName)
 
 	if resourceType != resource.ResourceTypeUnknown && resourceType != resource.ResourceTypeCollection {
@@ -156,11 +140,9 @@ func (h *Handler) HandleCreateRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	postData := make(map[string]any)
+	var postData domain.Record
 
-	if err := jsonv2.UnmarshalRead(r.Body, &postData); err != nil {
-		log.Printf("ERROR: Failed to decode request for '%s': %v", resourceName, err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := h.decodeJSON(w, r, &postData); err != nil {
 		return
 	}
 
@@ -179,11 +161,6 @@ func (h *Handler) HandleUpsertRecordByKey(w http.ResponseWriter, r *http.Request
 	resourceName := chi.URLParam(r, "resourceName")
 	recordKey := chi.URLParam(r, "recordKey")
 
-	if resourceName == "" || recordKey == "" {
-		http.Error(w, "Resource name and record key are required", http.StatusBadRequest)
-		return
-	}
-
 	resourceType := h.resourceService.CheckResourceType(r.Context(), resourceName)
 
 	if resourceType != resource.ResourceTypeUnknown && resourceType != resource.ResourceTypeKeyedObject {
@@ -191,11 +168,9 @@ func (h *Handler) HandleUpsertRecordByKey(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	postData := make(map[string]any)
+	var postData domain.Record
 
-	if err := jsonv2.UnmarshalRead(r.Body, &postData); err != nil {
-		log.Printf("ERROR: Failed to decode request for '%s': %v", resourceName, err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := h.decodeJSON(w, r, &postData); err != nil {
 		return
 	}
 
@@ -236,11 +211,6 @@ func (h *Handler) handleDeleteRecordByKey(w http.ResponseWriter, r *http.Request
 func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	resourceName := chi.URLParam(r, "resourceName")
 	identifier := chi.URLParam(r, "identifier")
-
-	if resourceName == "" || identifier == "" {
-		http.Error(w, "Resource name and identifier are required", http.StatusBadRequest)
-		return
-	}
 
 	resourceType := h.resourceService.CheckResourceType(r.Context(), resourceName)
 

@@ -28,6 +28,31 @@ func NewHandler(svc resource.Service) *Handler {
 	}
 }
 
+func (h *Handler) handleError(w http.ResponseWriter, err error) {
+	var httpStatusCode int
+	switch {
+
+	// Not Found Errors
+	case errors.Is(err, resource.ErrResourceNotFound), errors.Is(err, resource.ErrRecordNotFound):
+		httpStatusCode = http.StatusNotFound
+
+	// Bad Request Errors
+	case errors.Is(err, resource.ErrEmptyResourceName), errors.Is(err, resource.ErrEmptyRecordID), errors.Is(err, resource.ErrInvalidRecord), errors.Is(err, resource.ErrNoDataProvided):
+		httpStatusCode = http.StatusBadRequest
+
+	// Conflict Errors
+	case errors.Is(err, resource.ErrWrongResourceType), errors.Is(err, resource.ErrDuplicateID):
+		httpStatusCode = http.StatusConflict
+
+	// Default to Server Error
+	default:
+		log.Printf("ERROR: Unhandled error from service: %v", err)
+		httpStatusCode = http.StatusInternalServerError
+	}
+
+	http.Error(w, err.Error(), httpStatusCode)
+}
+
 func RequestSizeLimit(maxSize int64) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 
@@ -63,15 +88,15 @@ func (h *Handler) HandleGetAllRecords(w http.ResponseWriter, r *http.Request) {
 	// cleanly extract the URL parameter
 	resourceName := chi.URLParam(r, "resourceName")
 
+	if resourceName == "" {
+		http.Error(w, "Resource name is required", http.StatusBadRequest)
+		return
+	}
+
 	// call the core service
 	records, err := h.resourceService.GetAllRecords(r.Context(), resourceName)
 	if err != nil {
-		if errors.Is(err, resource.ErrEmptyResourceName) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		log.Printf("ERROR: Failed to get all records for '%s': %v", resourceName, err)
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		h.handleError(w, err)
 		return
 	}
 
@@ -92,30 +117,14 @@ func (h *Handler) HandleGetRecordByID(w http.ResponseWriter, r *http.Request) {
 	resourceName := chi.URLParam(r, "resourceName")
 	recordID := chi.URLParam(r, "recordID")
 
+	if resourceName == "" || recordID == "" {
+		http.Error(w, "Resource name and record key are required", http.StatusBadRequest)
+		return
+	}
+
 	record, err := h.resourceService.GetRecordByID(r.Context(), resourceName, recordID)
 	if err != nil {
-		var httpStatusCode int
-		switch {
-		case errors.Is(err, resource.ErrEmptyResourceName):
-			httpStatusCode = http.StatusBadRequest
-
-		case errors.Is(err, resource.ErrEmptyRecordID):
-			httpStatusCode = http.StatusBadRequest
-
-		case errors.Is(err, resource.ErrResourceNotFound):
-			httpStatusCode = http.StatusNotFound
-
-		case errors.Is(err, resource.ErrRecordNotFound):
-			httpStatusCode = http.StatusNotFound
-
-		case errors.Is(err, resource.ErrWrongResourceType):
-			httpStatusCode = http.StatusConflict
-
-		default:
-			httpStatusCode = http.StatusInternalServerError
-		}
-
-		http.Error(w, err.Error(), httpStatusCode)
+		h.handleError(w, err)
 		return
 	}
 
@@ -131,6 +140,11 @@ func (h *Handler) HandleGetRecordByID(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) HandleCreateRecord(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close() // needs to happen before as if UnmarshallRead below fails and returns, this never happens
 	resourceName := chi.URLParam(r, "resourceName")
+
+	if resourceName == "" {
+		http.Error(w, "Resource name is required", http.StatusBadRequest)
+		return
+	}
 
 	resourceType := h.resourceService.CheckResourceType(r.Context(), resourceName)
 
@@ -149,20 +163,7 @@ func (h *Handler) HandleCreateRecord(w http.ResponseWriter, r *http.Request) {
 
 	record, err := h.resourceService.CreateRecordInCollection(r.Context(), resourceName, postData)
 	if err != nil {
-		var httpStatusCode int
-		switch {
-		case errors.Is(err, resource.ErrNoDataProvided):
-			httpStatusCode = http.StatusBadRequest
-
-		// if checking for duplicates fails (in resource)
-		case errors.Is(err, resource.ErrDuplicateID):
-			httpStatusCode = http.StatusConflict
-
-		default:
-			log.Printf("ERROR: Unhandled error from service: %v", err)
-			httpStatusCode = http.StatusInternalServerError
-		}
-		http.Error(w, err.Error(), httpStatusCode)
+		h.handleError(w, err)
 		return
 	}
 
@@ -203,26 +204,7 @@ func (h *Handler) HandleUpsertRecordByKey(w http.ResponseWriter, r *http.Request
 
 	record, wasCreated, err := h.resourceService.UpsertRecordInObject(r.Context(), resourceName, recordKey, postData)
 	if err != nil {
-		var httpStatusCode int
-		switch {
-		case errors.Is(err, resource.ErrNoDataProvided):
-			httpStatusCode = http.StatusBadRequest
-
-		// if checking for duplicates fails (in resource)
-		case errors.Is(err, resource.ErrEmptyRecordKey):
-			httpStatusCode = http.StatusBadRequest
-
-		case errors.Is(err, resource.ErrInvalidRecord):
-			httpStatusCode = http.StatusBadRequest
-
-		case errors.Is(err, resource.ErrInvalidResourceName):
-			httpStatusCode = http.StatusBadRequest
-
-		default:
-			log.Printf("ERROR: Unhandled error from service: %v", err)
-			httpStatusCode = http.StatusInternalServerError
-		}
-		http.Error(w, err.Error(), httpStatusCode)
+		h.handleError(w, err)
 		return
 	}
 
@@ -260,19 +242,7 @@ func (h *Handler) HandleDeleteRecordByID(w http.ResponseWriter, r *http.Request)
 
 	err := h.resourceService.DeleteRecordFromCollection(r.Context(), resourceName, recordID)
 	if err != nil {
-		var httpStatusCode int
-		switch {
-		case errors.Is(err, resource.ErrRecordNotFound):
-			httpStatusCode = http.StatusNotFound
-
-		case errors.Is(err, resource.ErrWrongResourceType):
-			httpStatusCode = http.StatusConflict
-
-		default:
-			log.Printf("ERROR: Unhandled error from service: %v", err)
-			httpStatusCode = http.StatusInternalServerError
-		}
-		http.Error(w, err.Error(), httpStatusCode)
+		h.handleError(w, err)
 		return
 	}
 

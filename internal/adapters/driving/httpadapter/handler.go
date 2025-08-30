@@ -28,6 +28,17 @@ func NewHandler(svc resource.Service) *Handler {
 	}
 }
 
+func (h *Handler) respondWithJSON(w http.ResponseWriter, responseCode int, data any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(responseCode)
+
+	opts := jsonv2.JoinOptions(jsontext.Multiline(true), jsontext.WithIndent("  "))
+
+	if err := jsonv2.MarshalWrite(w, data, opts); err != nil {
+		log.Printf("ERROR: Failed to encode response: %v", err)
+	}
+}
+
 func (h *Handler) handleError(w http.ResponseWriter, err error) {
 	var httpStatusCode int
 	switch {
@@ -104,13 +115,7 @@ func (h *Handler) HandleGetAllRecords(w http.ResponseWriter, r *http.Request) {
 		records = []domain.Record{}
 	}
 
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-
-	opts := jsonv2.JoinOptions(jsontext.Multiline(true), jsontext.WithIndent("  "))
-	if err := jsonv2.MarshalWrite(w, records, opts); err != nil {
-		log.Printf("ERROR: Failed to encode response for '%s': %v", resourceName, err)
-	}
+	h.respondWithJSON(w, http.StatusOK, records)
 }
 
 func (h *Handler) HandleGetRecordByID(w http.ResponseWriter, r *http.Request) {
@@ -128,13 +133,7 @@ func (h *Handler) HandleGetRecordByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-
-	opts := jsonv2.JoinOptions(jsontext.Multiline(true), jsontext.WithIndent("  "))
-	if err := jsonv2.MarshalWrite(w, record, opts); err != nil {
-		log.Printf("ERROR: Failed to encode response for '%s' with ID '%s': %v", resourceName, recordID, err)
-	}
+	h.respondWithJSON(w, http.StatusOK, record)
 }
 
 func (h *Handler) HandleCreateRecord(w http.ResponseWriter, r *http.Request) {
@@ -153,7 +152,7 @@ func (h *Handler) HandleCreateRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	postData := make(map[string]any, 0)
+	postData := make(map[string]any)
 
 	if err := jsonv2.UnmarshalRead(r.Body, &postData); err != nil {
 		log.Printf("ERROR: Failed to decode request for '%s': %v", resourceName, err)
@@ -167,13 +166,7 @@ func (h *Handler) HandleCreateRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusCreated)
-
-	opts := jsonv2.JoinOptions(jsontext.Multiline(true), jsontext.WithIndent("  "))
-	if err := jsonv2.MarshalWrite(w, record, opts); err != nil {
-		log.Printf("ERROR: Failed to encode response for '%s': %v", resourceName, err)
-	}
+	h.respondWithJSON(w, http.StatusCreated, record)
 }
 
 func (h *Handler) HandleUpsertRecordByKey(w http.ResponseWriter, r *http.Request) {
@@ -208,20 +201,14 @@ func (h *Handler) HandleUpsertRecordByKey(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-
-	var successStatus int
+	var successStatusCode int
 	if wasCreated {
-		successStatus = http.StatusCreated
+		successStatusCode = http.StatusCreated
 	} else {
-		successStatus = http.StatusOK
+		successStatusCode = http.StatusOK
 	}
-	w.WriteHeader(successStatus)
 
-	opts := jsonv2.JoinOptions(jsontext.Multiline(true), jsontext.WithIndent("  "))
-	if err := jsonv2.MarshalWrite(w, record, opts); err != nil {
-		log.Printf("ERROR: Failed to encode response for '%s': %v", resourceName, err)
-	}
+	h.respondWithJSON(w, successStatusCode, record)
 }
 
 func (h *Handler) HandleDeleteRecordByID(w http.ResponseWriter, r *http.Request) {

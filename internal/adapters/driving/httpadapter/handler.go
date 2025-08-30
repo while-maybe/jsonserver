@@ -49,10 +49,12 @@ func (h *Handler) SetupRoutes() http.Handler {
 
 	// write operations will have size limits
 	router.Group(func(r chi.Router) {
-		r.Use(RequestSizeLimit(MaxRequestSize)) // 1MB limit
+		r.Use(RequestSizeLimit(MaxRequestSize)) // enforce MaxRequestSize limit
 		r.Post("/{resourceName}", h.HandleCreateRecord)
 		r.Put("/{resourceName}/{recordKey}", h.HandleUpsertRecordByKey)
 	})
+
+	router.Delete("/{resourceName}/{recordID}", h.HandleDeleteRecordByID)
 
 	return router
 }
@@ -92,15 +94,28 @@ func (h *Handler) HandleGetRecordByID(w http.ResponseWriter, r *http.Request) {
 
 	record, err := h.resourceService.GetRecordByID(r.Context(), resourceName, recordID)
 	if err != nil {
-		if errors.Is(err, resource.ErrEmptyResourceName) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
+		var httpStatusCode int
+		switch {
+		case errors.Is(err, resource.ErrEmptyResourceName):
+			httpStatusCode = http.StatusBadRequest
+
+		case errors.Is(err, resource.ErrEmptyRecordID):
+			httpStatusCode = http.StatusBadRequest
+
+		case errors.Is(err, resource.ErrResourceNotFound):
+			httpStatusCode = http.StatusNotFound
+
+		case errors.Is(err, resource.ErrRecordNotFound):
+			httpStatusCode = http.StatusNotFound
+
+		case errors.Is(err, resource.ErrWrongResourceType):
+			httpStatusCode = http.StatusConflict
+
+		default:
+			httpStatusCode = http.StatusInternalServerError
 		}
-		if errors.Is(err, resource.ErrNotFound) {
-			http.Error(w, err.Error(), http.StatusNotFound)
-			return
-		}
-		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+
+		http.Error(w, err.Error(), httpStatusCode)
 		return
 	}
 
@@ -225,4 +240,42 @@ func (h *Handler) HandleUpsertRecordByKey(w http.ResponseWriter, r *http.Request
 	if err := jsonv2.MarshalWrite(w, record, opts); err != nil {
 		log.Printf("ERROR: Failed to encode response for '%s': %v", resourceName, err)
 	}
+}
+
+func (h *Handler) HandleDeleteRecordByID(w http.ResponseWriter, r *http.Request) {
+	resourceName := chi.URLParam(r, "resourceName")
+	recordID := chi.URLParam(r, "recordID")
+
+	if resourceName == "" || recordID == "" {
+		http.Error(w, "Resource name and record key are required", http.StatusBadRequest)
+		return
+	}
+
+	resourceType := h.resourceService.CheckResourceType(r.Context(), resourceName)
+
+	if resourceType != resource.ResourceTypeUnknown && resourceType != resource.ResourceTypeCollection {
+		http.Error(w, "Method DELETE by ID is not allowed on keyed-object or singular resources.", http.StatusMethodNotAllowed)
+		return
+	}
+
+	err := h.resourceService.DeleteRecordFromCollection(r.Context(), resourceName, recordID)
+	if err != nil {
+		var httpStatusCode int
+		switch {
+		case errors.Is(err, resource.ErrRecordNotFound):
+			httpStatusCode = http.StatusNotFound
+
+		case errors.Is(err, resource.ErrWrongResourceType):
+			httpStatusCode = http.StatusConflict
+
+		default:
+			log.Printf("ERROR: Unhandled error from service: %v", err)
+			httpStatusCode = http.StatusInternalServerError
+		}
+		http.Error(w, err.Error(), httpStatusCode)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+
 }

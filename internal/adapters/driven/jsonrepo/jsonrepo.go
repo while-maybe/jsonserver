@@ -226,12 +226,20 @@ func (r *jsonRepository) GetAllRecords(ctx context.Context, resourceName string)
 }
 
 func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, recordID string) (domain.Record, error) {
+	if recordID == "" {
+		return nil, resource.ErrEmptyRecordKey
+	}
+
+	if resourceName == "" {
+		return nil, resource.ErrEmptyResourceName
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	data, ok := r.data[resourceName]
 	if !ok {
-		return nil, resource.ErrNotFound
+		return nil, resource.ErrResourceNotFound
 	}
 
 	// Use direct type switches in methods that need to work with the data  to avoid redundant type assertions and improve readability: The getResourceType helper is reserved for the public API.
@@ -241,7 +249,7 @@ func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 
 		record, targetIndex := r.findRecordByID(value, recordID)
 		if targetIndex == -1 {
-			return nil, resource.ErrNotFound
+			return nil, resource.ErrRecordNotFound
 		}
 
 		return record, nil
@@ -249,7 +257,7 @@ func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 	case map[string]any:
 		item, ok := value[recordID]
 		if !ok {
-			return nil, resource.ErrNotFound
+			return nil, resource.ErrRecordNotFound
 		}
 
 		if recordMap, ok := item.(domain.Record); ok {
@@ -400,7 +408,7 @@ func (r *jsonRepository) DeleteRecordFromCollection(ctx context.Context, resourc
 	}
 
 	if resourceName == "" {
-		return resource.ErrInvalidResourceName
+		return resource.ErrEmptyResourceName
 	}
 
 	r.mu.Lock()
@@ -418,7 +426,7 @@ func (r *jsonRepository) DeleteRecordFromCollection(ctx context.Context, resourc
 
 	_, targetIndex := r.findRecordByID(collection, recordID)
 	if targetIndex == -1 {
-		return resource.ErrNotFound
+		return resource.ErrRecordNotFound
 	}
 
 	newCollection := append(collection[:targetIndex], collection[targetIndex+1:]...)

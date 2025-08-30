@@ -14,7 +14,7 @@ type Service interface {
 
 	// Commands for arrays (collections)
 	CreateRecordInCollection(ctx context.Context, resourceName string, data map[string]any) (domain.Record, error)
-	// UpdateRecordInCollection(ctx context.Context, resourceName string, recordID string, data map[string]any) (domain.Record, error)
+	UpdateRecordInCollection(ctx context.Context, resourceName string, recordID string, data map[string]any) (domain.Record, error)
 	DeleteRecordFromCollection(ctx context.Context, resourceName string, recordID string) error
 
 	// Commands for (keyed) objects

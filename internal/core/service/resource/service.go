@@ -28,7 +28,7 @@ func (s *resourceService) CheckResourceType(ctx context.Context, resourceName st
 
 func (s *resourceService) GetAllRecords(ctx context.Context, resourceName string) ([]domain.Record, error) {
 	if resourceName == "" {
-		return nil, fmt.Errorf("GetAllRecords: %w", ErrEmptyResourceName)
+		return nil, ErrEmptyResourceName
 	}
 
 	result, err := s.resourceRepo.GetAllRecords(ctx, resourceName)
@@ -39,16 +39,16 @@ func (s *resourceService) GetAllRecords(ctx context.Context, resourceName string
 	return result, nil
 }
 
-func (s *resourceService) GetRecordByID(ctx context.Context, resourceName, resourceID string) (domain.Record, error) {
+func (s *resourceService) GetRecordByID(ctx context.Context, resourceName, recordID string) (domain.Record, error) {
 	if resourceName == "" {
-		return nil, fmt.Errorf("GetRecordByID: %w", ErrEmptyResourceName)
+		return nil, ErrEmptyResourceName
 	}
 
-	if resourceID == "" {
+	if recordID == "" {
 		return nil, ErrEmptyRecordID
 	}
 
-	return s.resourceRepo.GetRecordByID(ctx, resourceName, resourceID)
+	return s.resourceRepo.GetRecordByID(ctx, resourceName, recordID)
 }
 
 func (s *resourceService) CreateRecordInCollection(ctx context.Context, resourceName string, data map[string]any) (domain.Record, error) {
@@ -74,7 +74,7 @@ func (s *resourceService) CreateRecordInCollection(ctx context.Context, resource
 		}
 
 		// If an error occurred, we must ensure it was NOT ErrNotFound. Any other error is a system failure.
-		if !errors.Is(err, ErrNotFound) {
+		if !errors.Is(err, ErrRecordNotFound) {
 			return nil, fmt.Errorf("failed to check for duplicate ID: %w", err)
 		}
 
@@ -146,4 +146,41 @@ func (s *resourceService) DeleteRecordInObject(ctx context.Context, resourceName
 	}
 
 	return s.resourceRepo.DeleteRecordByKey(ctx, resourceName, recordKey)
+}
+
+func (s *resourceService) UpdateRecordInCollection(ctx context.Context, resourceName string, recordID string, data map[string]any) (domain.Record, error) {
+	if resourceName == "" {
+		return nil, ErrEmptyResourceName
+	}
+
+	if recordID == "" {
+		return nil, ErrEmptyRecordID
+	}
+
+	if len(data) == 0 {
+		return nil, ErrNoDataProvided
+	}
+
+	// create a new record for the request data (the data func parameter)
+	recordFromRequest, err := domain.NewFromMap(data)
+	if err != nil {
+		return nil, fmt.Errorf("UpdateRecordInCollection: invalid data format: %w", err)
+	}
+
+	if bodyID, hasID := recordFromRequest.ID(); hasID {
+		// if the record (in post data) has an ID, it must match the recordID (from the parameter)
+		if bodyID != recordID {
+			return nil, fmt.Errorf("%w: id in request body ('%s') does not match id in URL ('%s')", ErrInvalidRecord, bodyID, recordID)
+		}
+	} else {
+		// there is no 'id' field in postData, so we force it to be the provided parameter recordID
+		recordFromRequest.SetID(recordID)
+	}
+
+	updatedRecord, err := s.resourceRepo.UpdateRecordInCollection(ctx, resourceName, recordID, recordFromRequest)
+	if err != nil {
+		return nil, fmt.Errorf("UpdateRecordInCollection: %w", err)
+	}
+
+	return updatedRecord, nil
 }

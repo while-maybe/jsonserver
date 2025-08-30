@@ -488,4 +488,7 @@ func (r *jsonRepository) DeleteRecordByKey(ctx context.Context, resourceName, re
 	return nil
 }
 
-// TODO implement remaining methods
+func (r *jsonRepository) UpdateRecordInCollection(ctx context.Context, resourceName, recordID string, recordData domain.Record) (domain.Record, error) {
+
+	return nil, nil
+}

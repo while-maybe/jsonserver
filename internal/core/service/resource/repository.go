@@ -26,7 +26,7 @@ type Repository interface {
 
 	// Commands for arrays (collections)
 	CreateRecord(ctx context.Context, resourceName string, recordData domain.Record) (domain.Record, error)
-	// UpdateRecord(ctx context.Context, resourceName, recordID string, recordData domain.Record) (domain.Record, error)
+	UpdateRecordInCollection(ctx context.Context, resourceName, recordID string, recordData domain.Record) (domain.Record, error)
 	DeleteRecordFromCollection(ctx context.Context, resourceName, recordID string) error
 
 	// Commands for (keyed) objects

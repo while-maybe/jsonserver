@@ -416,7 +416,7 @@ func (r *jsonRepository) DeleteRecordFromCollection(ctx context.Context, resourc
 
 	data, ok := r.data[resourceName]
 	if !ok {
-		return resource.ErrNotFound
+		return resource.ErrResourceNotFound
 	}
 
 	collection, isCollection := data.([]any)
@@ -437,6 +437,51 @@ func (r *jsonRepository) DeleteRecordFromCollection(ctx context.Context, resourc
 		r.data[resourceName] = collection
 
 		log.Printf("Failed to persist data to %s: %v", r.filename, err)
+		return err
+	}
+
+	return nil
+}
+
+func (r *jsonRepository) DeleteRecordByKey(ctx context.Context, resourceName, recordKey string) error {
+
+	if recordKey == "" {
+		return resource.ErrEmptyRecordKey
+	}
+
+	if resourceName == "" {
+		return resource.ErrEmptyResourceName
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	originalResource, ok := r.data[resourceName]
+	if !ok {
+		return resource.ErrResourceNotFound
+	}
+
+	keyedObject, isMap := originalResource.(map[string]any)
+	if !isMap {
+		return resource.ErrWrongResourceType
+	}
+
+	if _, keyExists := keyedObject[recordKey]; !keyExists {
+		return resource.ErrRecordNotFound
+	}
+
+	newKeyedObject := make(map[string]any, len(keyedObject))
+	maps.Copy(newKeyedObject, keyedObject)
+
+	delete(newKeyedObject, recordKey)
+
+	r.data[resourceName] = newKeyedObject
+
+	if err := r.persist(); err != nil {
+		// revert changes if not possible to save to file
+		r.data[resourceName] = originalResource
+
+		log.Printf("Failed to persist deletion of key '%s' from '%s', rolling back: %v", recordKey, resourceName, err)
 		return err
 	}
 

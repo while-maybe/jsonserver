@@ -19,7 +19,7 @@ type Service interface {
 
 	// Commands for (keyed) objects
 	UpsertRecordInObject(ctx context.Context, resourceName, recordKey string, data map[string]any) (domain.Record, bool, error)
-	// DeleteRecordInObject(ctx context.Context, resourceName, recordKey string) error
+	DeleteRecordInObject(ctx context.Context, resourceName, recordKey string) error
 
 	// Commands for singular resources like ints, str
 	// GetSingularResource(ctx context.Context, resourceName string) (any, error)

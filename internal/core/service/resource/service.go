@@ -133,7 +133,17 @@ func (s *resourceService) DeleteRecordFromCollection(ctx context.Context, resour
 		return ErrEmptyRecordID
 	}
 
-	s.resourceRepo.GetRecordByID(ctx, resourceName, recordID)
+	return s.resourceRepo.DeleteRecordFromCollection(ctx, resourceName, recordID)
+}
 
-	return nil
+func (s *resourceService) DeleteRecordInObject(ctx context.Context, resourceName, recordKey string) error {
+	if resourceName == "" {
+		return ErrEmptyResourceName
+	}
+
+	if recordKey == "" {
+		return ErrEmptyRecordKey
+	}
+
+	return s.resourceRepo.DeleteRecordByKey(ctx, resourceName, recordKey)
 }

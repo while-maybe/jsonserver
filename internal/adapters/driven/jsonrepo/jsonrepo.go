@@ -293,13 +293,16 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 		return nil, fmt.Errorf("%w: records in a collection must have a valid ID", resource.ErrInvalidRecord)
 	}
 
+	recordToStore := make(domain.Record, len(recordData))
+	maps.Copy(recordToStore, recordData)
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	data, hasData := r.data[resourceName]
 
 	if !hasData {
-		r.data[resourceName] = []any{recordData}
+		r.data[resourceName] = []any{recordToStore}
 
 		if err := r.persist(); err != nil {
 
@@ -307,7 +310,7 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 			delete(r.data, resourceName)
 			return nil, err
 		}
-		return recordData, nil
+		return recordToStore, nil
 	}
 
 	collection, ok := data.([]any)
@@ -325,7 +328,7 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 		}
 	}
 
-	newCollection := append(collection, recordData)
+	newCollection := append(collection, recordToStore)
 
 	r.data[resourceName] = newCollection
 
@@ -336,7 +339,7 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 		log.Printf("Failed to persist data to %s: %v", r.filename, err)
 		return nil, err
 	}
-	return recordData, nil
+	return recordToStore, nil
 }
 
 func (r *jsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, recordKey string, recordData domain.Record) (domain.Record, bool, error) {
@@ -489,6 +492,50 @@ func (r *jsonRepository) DeleteRecordByKey(ctx context.Context, resourceName, re
 }
 
 func (r *jsonRepository) UpdateRecordInCollection(ctx context.Context, resourceName, recordID string, recordData domain.Record) (domain.Record, error) {
+	if err := recordData.Validate(); err != nil {
+		return nil, fmt.Errorf("%w: %s", resource.ErrInvalidRecord, err.Error())
+	}
 
-	return nil, nil
+	// we can ignore error here has it's been verified with .Validate() above
+	if newID, hasID := recordData.ID(); !hasID || newID != recordID {
+		return nil, resource.ErrMismatchedID
+	}
+
+	recordToStore := make(domain.Record, len(recordData))
+	maps.Copy(recordToStore, recordData)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	data, hasData := r.data[resourceName]
+
+	if !hasData {
+		return nil, resource.ErrInvalidResourceName
+	}
+
+	collection, ok := data.([]any)
+	if !ok {
+		return nil, resource.ErrWrongResourceType
+	}
+
+	_, recordPos := r.findRecordByID(collection, recordID)
+	if recordPos == -1 {
+		return nil, resource.ErrRecordNotFound
+	}
+
+	newCollection := make([]any, len(collection))
+	copy(newCollection, collection)
+
+	newCollection[recordPos] = recordToStore
+
+	r.data[resourceName] = newCollection
+
+	if err := r.persist(); err != nil {
+		// revert changes if not possible to save to file
+		r.data[resourceName] = collection
+
+		log.Printf("Failed to persist data to %s: %v", r.filename, err)
+		return nil, err
+	}
+	return recordToStore, nil
 }

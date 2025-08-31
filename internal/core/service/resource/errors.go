@@ -4,7 +4,8 @@ import "errors"
 
 var (
 	ErrDuplicateID         = errors.New("record with this ID already exists")
-	ErrEmptyRecordID       = errors.New("record ID canno be empty")
+	ErrEmptyRecordID       = errors.New("record ID cannot be empty")
+	ErrMismatchedID        = errors.New("ID in record and parameter provided ID do not match")
 	ErrNoDataProvided      = errors.New("no data provided")
 	ErrEmptyRecordKey      = errors.New("record key cannot be empty")
 	ErrEmptyResourceName   = errors.New("resource name cannot be empty")

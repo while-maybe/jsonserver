@@ -84,14 +84,15 @@ func (h *Handler) SetupRoutes() http.Handler {
 	router.Use(middleware.Logger)
 	router.Use(middleware.Recoverer)
 
+	// Read operations - use specific 'recordID' for clarity
 	router.With(RequireURLParams("resourceName")).Get("/{resourceName}", h.HandleGetAllRecords)
 	router.With(RequireURLParams("resourceName", "recordID")).Get("/{resourceName}/{recordID}", h.HandleGetRecordByID)
 
-	// write operations will have size limits
+	// Write operations with size limits - use generic 'identifier' for flexibility
 	router.Group(func(r chi.Router) {
 		r.Use(RequestSizeLimit(MaxRequestSize)) // enforce MaxRequestSize limit
 		r.With(RequireURLParams("resourceName")).Post("/{resourceName}", h.HandleCreateRecord)
-		r.With(RequireURLParams("resourceName", "recordKey")).Put("/{resourceName}/{recordKey}", h.HandleUpsertRecordByKey)
+		r.With(RequireURLParams("resourceName", "identifier")).Put("/{resourceName}/{identifier}", h.HandleUpdate)
 	})
 
 	router.With(RequireURLParams("resourceName", "identifier")).Delete("/{resourceName}/{identifier}", h.HandleDelete)
@@ -155,18 +156,8 @@ func (h *Handler) HandleCreateRecord(w http.ResponseWriter, r *http.Request) {
 	h.respondWithJSON(w, http.StatusCreated, record)
 }
 
-func (h *Handler) HandleUpsertRecordByKey(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) handleUpsertRecordByKey(w http.ResponseWriter, r *http.Request, resourceName, recordKey string) {
 	defer r.Body.Close()
-
-	resourceName := chi.URLParam(r, "resourceName")
-	recordKey := chi.URLParam(r, "recordKey")
-
-	resourceType := h.resourceService.CheckResourceType(r.Context(), resourceName)
-
-	if resourceType != resource.ResourceTypeUnknown && resourceType != resource.ResourceTypeKeyedObject {
-		http.Error(w, "Method PUT not allowed on this resource type. Use POST for collection objects.", http.StatusMethodNotAllowed)
-		return
-	}
 
 	var postData domain.Record
 
@@ -223,7 +214,6 @@ func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 		h.handleDeleteRecordByKey(w, r, resourceName, identifier)
 
 	case resource.ResourceTypeSingular:
-		// TODO implement singular entries
 		h.handleDeleteRecordByKey(w, r, resourceName, identifier)
 
 	case resource.ResourceTypeUnknown:
@@ -231,5 +221,47 @@ func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 	default:
 		h.handleError(w, resource.ErrUnknownResourceType)
 
+	}
+}
+
+func (h *Handler) handleUpdateRecordByID(w http.ResponseWriter, r *http.Request, resourceName, recordID string) {
+	defer r.Body.Close()
+
+	var postData domain.Record
+
+	if err := h.decodeJSON(w, r, &postData); err != nil {
+		return
+	}
+
+	record, err := h.resourceService.UpdateRecordInCollection(r.Context(), resourceName, recordID, postData)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	h.respondWithJSON(w, http.StatusOK, record)
+}
+
+func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
+	resourceName := chi.URLParam(r, "resourceName")
+	identifier := chi.URLParam(r, "identifier")
+
+	resourceType := h.resourceService.CheckResourceType(r.Context(), resourceName)
+
+	switch resourceType {
+
+	case resource.ResourceTypeCollection:
+		h.handleUpdateRecordByID(w, r, resourceName, identifier)
+
+	case resource.ResourceTypeKeyedObject:
+		h.handleUpsertRecordByKey(w, r, resourceName, identifier)
+
+	case resource.ResourceTypeSingular:
+		h.handleUpsertRecordByKey(w, r, resourceName, identifier)
+
+	case resource.ResourceTypeUnknown:
+		h.handleError(w, resource.ErrResourceNotFound)
+	default:
+		h.handleError(w, resource.ErrUnknownResourceType)
 	}
 }

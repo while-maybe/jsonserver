@@ -201,6 +201,10 @@ func (r *jsonRepository) GetResourceType(ctx context.Context, resourceName strin
 }
 
 func (r *jsonRepository) GetAllRecords(ctx context.Context, resourceName string) ([]domain.Record, error) {
+	if resourceName == "" {
+		return nil, resource.ErrEmptyResourceName
+	}
+
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -240,9 +244,12 @@ func (r *jsonRepository) GetAllRecords(ctx context.Context, resourceName string)
 		return result, nil
 
 	default:
-		return []domain.Record{}, nil
+		record := domain.Record{
+			"key":   resourceName,
+			"value": value,
+		}
+		return []domain.Record{record}, nil
 	}
-
 }
 
 func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, recordID string) (domain.Record, error) {

@@ -6,6 +6,7 @@ import (
 	"jsonserver/internal/core/service/resource"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -22,16 +23,30 @@ type Handler struct {
 	resourceService resource.Service
 }
 
+type ListResponse[T any] struct {
+	Count int `json:"count"`
+	Data  []T `json:"data"`
+}
+
+type SingleObjectResponse[T any] struct {
+	Data T `json:"data"`
+}
+
+type ErrorResponse struct {
+	Error struct {
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
 func NewHandler(svc resource.Service) *Handler {
 	return &Handler{
 		resourceService: svc,
 	}
 }
 
-func (h *Handler) decodeJSON(w http.ResponseWriter, r *http.Request, data any) error {
+func (h *Handler) decodeJSON(r *http.Request, data any) error {
 	if err := jsonv2.UnmarshalRead(r.Body, data); err != nil {
 		log.Printf("ERROR: Failed to decode request body: %v", err)
-		http.Error(w, err.Error(), http.StatusBadRequest)
 		return err
 	}
 	return nil
@@ -75,7 +90,10 @@ func (h *Handler) handleError(w http.ResponseWriter, err error) {
 		httpStatusCode = http.StatusInternalServerError
 	}
 
-	http.Error(w, err.Error(), httpStatusCode)
+	var response ErrorResponse
+	response.Error.Message = err.Error()
+
+	h.respondWithJSON(w, httpStatusCode, response)
 }
 
 func (h *Handler) SetupRoutes() http.Handler {
@@ -83,10 +101,12 @@ func (h *Handler) SetupRoutes() http.Handler {
 
 	router.Use(middleware.Logger)
 	router.Use(middleware.Recoverer)
+	router.Use(middleware.Timeout(30 * time.Second))
 
 	// Read operations - use specific 'recordID' for clarity
 	router.With(RequireURLParams("resourceName")).Get("/{resourceName}", h.HandleGetAllRecords)
 	router.With(RequireURLParams("resourceName", "recordID")).Get("/{resourceName}/{recordID}", h.HandleGetRecordByID)
+	router.Get("/", h.HandleListResources)
 
 	// Write operations with size limits - use generic 'identifier' for flexibility
 	router.Group(func(r chi.Router) {
@@ -114,7 +134,12 @@ func (h *Handler) HandleGetAllRecords(w http.ResponseWriter, r *http.Request) {
 		records = []domain.Record{}
 	}
 
-	h.respondWithJSON(w, http.StatusOK, records)
+	response := ListResponse[domain.Record]{
+		Count: len(records),
+		Data:  records,
+	}
+
+	h.respondWithJSON(w, http.StatusOK, response)
 }
 
 func (h *Handler) HandleGetRecordByID(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +152,9 @@ func (h *Handler) HandleGetRecordByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.respondWithJSON(w, http.StatusOK, record)
+	response := SingleObjectResponse[domain.Record]{Data: record}
+
+	h.respondWithJSON(w, http.StatusOK, response)
 }
 
 func (h *Handler) HandleCreateRecord(w http.ResponseWriter, r *http.Request) {
@@ -137,13 +164,16 @@ func (h *Handler) HandleCreateRecord(w http.ResponseWriter, r *http.Request) {
 	resourceType := h.resourceService.CheckResourceType(r.Context(), resourceName)
 
 	if resourceType != resource.ResourceTypeUnknown && resourceType != resource.ResourceTypeCollection {
-		http.Error(w, "Method POST not allowed on this resource type. Use PUT for keyed objects.", http.StatusMethodNotAllowed)
+		response := ErrorResponse{}
+		response.Error.Message = "Method POST not allowed on this resource type. Use PUT for keyed objects."
+
+		h.respondWithJSON(w, http.StatusMethodNotAllowed, response)
 		return
 	}
 
 	var postData domain.Record
-
-	if err := h.decodeJSON(w, r, &postData); err != nil {
+	if err := h.decodeJSON(r, &postData); err != nil {
+		h.respondWithJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -153,7 +183,9 @@ func (h *Handler) HandleCreateRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.respondWithJSON(w, http.StatusCreated, record)
+	response := SingleObjectResponse[domain.Record]{Data: record}
+
+	h.respondWithJSON(w, http.StatusCreated, response)
 }
 
 func (h *Handler) handleUpsertRecordByKey(w http.ResponseWriter, r *http.Request, resourceName, recordKey string) {
@@ -161,7 +193,8 @@ func (h *Handler) handleUpsertRecordByKey(w http.ResponseWriter, r *http.Request
 
 	var postData domain.Record
 
-	if err := h.decodeJSON(w, r, &postData); err != nil {
+	if err := h.decodeJSON(r, &postData); err != nil {
+		h.respondWithJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -178,7 +211,9 @@ func (h *Handler) handleUpsertRecordByKey(w http.ResponseWriter, r *http.Request
 		successStatusCode = http.StatusOK
 	}
 
-	h.respondWithJSON(w, successStatusCode, record)
+	response := SingleObjectResponse[domain.Record]{Data: record}
+
+	h.respondWithJSON(w, successStatusCode, response)
 }
 
 func (h *Handler) handleDeleteRecordByID(w http.ResponseWriter, r *http.Request, resourceName, recordID string) {
@@ -200,6 +235,8 @@ func (h *Handler) handleDeleteRecordByKey(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
 	resourceName := chi.URLParam(r, "resourceName")
 	identifier := chi.URLParam(r, "identifier")
 
@@ -220,7 +257,6 @@ func (h *Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
 		h.handleError(w, resource.ErrResourceNotFound)
 	default:
 		h.handleError(w, resource.ErrUnknownResourceType)
-
 	}
 }
 
@@ -229,7 +265,8 @@ func (h *Handler) handleUpdateRecordByID(w http.ResponseWriter, r *http.Request,
 
 	var postData domain.Record
 
-	if err := h.decodeJSON(w, r, &postData); err != nil {
+	if err := h.decodeJSON(r, &postData); err != nil {
+		h.respondWithJSON(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -239,10 +276,14 @@ func (h *Handler) handleUpdateRecordByID(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	h.respondWithJSON(w, http.StatusOK, record)
+	response := SingleObjectResponse[domain.Record]{Data: record}
+
+	h.respondWithJSON(w, http.StatusOK, response)
 }
 
 func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
+	defer r.Body.Close()
+
 	resourceName := chi.URLParam(r, "resourceName")
 	identifier := chi.URLParam(r, "identifier")
 
@@ -264,4 +305,19 @@ func (h *Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	default:
 		h.handleError(w, resource.ErrUnknownResourceType)
 	}
+}
+
+func (h *Handler) HandleListResources(w http.ResponseWriter, r *http.Request) {
+	resourceNames, err := h.resourceService.ListResources(r.Context())
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	response := ListResponse[string]{
+		Count: len(resourceNames),
+		Data:  resourceNames,
+	}
+
+	h.respondWithJSON(w, http.StatusOK, response)
 }

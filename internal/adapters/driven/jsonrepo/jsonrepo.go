@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"maps"
+	"math"
 
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
@@ -106,16 +107,35 @@ func (r *jsonRepository) transformSliceItems(slice []any, transformer func(any) 
 func (r *jsonRepository) normaliseLoadedValue(value any) any {
 	switch v := value.(type) {
 	case []any:
-
 		op := func(item any) any {
-			if itemMap, ok := item.(map[string]any); ok {
+
+			processed := r.normaliseLoadedValue(item)
+
+			if itemMap, ok := processed.(map[string]any); ok {
 				return domain.Record(itemMap)
 			}
 
 			// non-map items are kept as is
-			return item
+			return processed
 		}
 		return r.transformSliceItems(v, op)
+
+	case map[string]any:
+		result := make(map[string]any)
+
+		for k, value := range v {
+			result[k] = r.normaliseLoadedValue(value)
+		}
+
+		return result
+
+	case float64:
+		// if the number has no fractional part, convert and return to int
+		if v == math.Trunc(v) {
+			return int(v)
+		}
+		// otherwise keep the float
+		return v
 
 	default:
 		// Keep keyed objects and singular values as-is

@@ -11,6 +11,7 @@ type Service interface {
 	GetRecordByID(ctx context.Context, resourceName, recordID string) (domain.Record, error)
 	// Count(ctx context.Context, resourceName string) (int, error)
 	CheckResourceType(ctx context.Context, resourceName string) ResourceType
+	ListResources(ctx context.Context) ([]string, error)
 
 	// Commands for arrays (collections)
 	CreateRecordInCollection(ctx context.Context, resourceName string, data map[string]any) (domain.Record, error)

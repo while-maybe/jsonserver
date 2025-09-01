@@ -6,6 +6,7 @@ import (
 	"log"
 	"maps"
 	"math"
+	"sort"
 
 	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
@@ -565,4 +566,20 @@ func (r *jsonRepository) UpdateRecordInCollection(ctx context.Context, resourceN
 		return nil, err
 	}
 	return recordToStore, nil
+}
+
+func (r *jsonRepository) ListResources(ctx context.Context) ([]string, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	resourceNames := make([]string, 0, len(r.data))
+
+	for resource := range r.data {
+		resourceNames = append(resourceNames, resource)
+	}
+
+	// output becomes predictable
+	sort.Strings(resourceNames)
+
+	return resourceNames, nil
 }

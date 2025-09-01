@@ -184,3 +184,8 @@ func (s *resourceService) UpdateRecordInCollection(ctx context.Context, resource
 
 	return updatedRecord, nil
 }
+
+func (s *resourceService) ListResources(ctx context.Context) ([]string, error) {
+
+	return s.resourceRepo.ListResources(ctx)
+}

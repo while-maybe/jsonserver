@@ -105,31 +105,19 @@ func (r *jsonRepository) transformSliceItems(slice []any, transformer func(any) 
 	return result
 }
 
+func (j *jsonRepository) transformMapItems(m map[string]any, transformer func(any) any) domain.Record {
+	normalisedMap := make(map[string]any, len(m))
+
+	for key, value := range m {
+		normalisedMap[key] = transformer(value)
+	}
+
+	// this conversion is safe as domain.Record IS a map[string]any
+	return domain.Record(normalisedMap)
+}
+
 func (r *jsonRepository) normaliseLoadedValue(value any) any {
 	switch v := value.(type) {
-	case []any:
-		op := func(item any) any {
-
-			processed := r.normaliseLoadedValue(item)
-
-			if itemMap, ok := processed.(map[string]any); ok {
-				return domain.Record(itemMap)
-			}
-
-			// non-map items are kept as is
-			return processed
-		}
-		return r.transformSliceItems(v, op)
-
-	case map[string]any:
-		result := make(map[string]any)
-
-		for k, value := range v {
-			result[k] = r.normaliseLoadedValue(value)
-		}
-
-		return result
-
 	case float64:
 		// if the number has no fractional part, convert and return to int
 		if v == math.Trunc(v) {
@@ -137,6 +125,12 @@ func (r *jsonRepository) normaliseLoadedValue(value any) any {
 		}
 		// otherwise keep the float
 		return v
+
+	case []any:
+		return r.transformSliceItems(v, r.normaliseLoadedValue)
+
+	case map[string]any:
+		return r.transformMapItems(v, r.normaliseLoadedValue)
 
 	default:
 		// Keep keyed objects and singular values as-is
@@ -282,29 +276,33 @@ func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 
 		return record, nil
 
-	case map[string]any:
+	case domain.Record:
 		item, ok := value[recordID]
 		if !ok {
 			return nil, resource.ErrRecordNotFound
 		}
 
-		if recordMap, ok := item.(domain.Record); ok {
+		switch v := item.(type) {
+		case domain.Record:
+			newRecord := make(domain.Record, len(v)+1)
 
-			newRecord := make(domain.Record, len(recordMap)+1)
-
-			// A shallow copy is a better choice otherwise we'd be modifying the recordMap under a Rlock() -  as of 1.21, maps.Copy replaces the need for a loop
-			maps.Copy(newRecord, recordMap)
+			// A shallow copy is a better choice otherwise we'd be modifying the v under a Rlock() -  as of 1.21, maps.Copy replaces the need for a loop
+			maps.Copy(newRecord, v)
 
 			if _, hasID := newRecord.ID(); !hasID {
 				newRecord.SetID(recordID)
 			}
 			return newRecord, nil
+
+		default:
+			record := domain.Record{
+				"key":   recordID,
+				"value": v,
+			}
+
+			record.SetID(recordID)
+			return record, nil
 		}
-
-		log.Printf(
-			"FATAL: Data corruption detected in resource '%s'. Key '%s' should be a domain.Record but is type %T.", resourceName, recordID, item)
-		return nil, resource.ErrInternal
-
 	default:
 		// if we got this far, def not found
 		return nil, resource.ErrWrongResourceType

@@ -76,7 +76,7 @@ func TestGetAllRecords(t *testing.T) {
 			},
 			wantErr: nil,
 		},
-		"ErrEmptyResourceName": {
+		"error - ErrEmptyResourceName": {
 			resourceName: "",
 			initialData:  testData,
 			wantRecords: []domain.Record{
@@ -118,6 +118,74 @@ func TestGetAllRecords(t *testing.T) {
 
 				// remember maps are unordered
 				assert.ElementsMatch(t, tc.wantRecords, records)
+			}
+		})
+	}
+}
+
+func TestGetRecordByID(t *testing.T) {
+	testCases := map[string]struct {
+		resourceName string
+		recordID     string
+		initialData  string
+		wantRecord   domain.Record
+		wantErr      error
+	}{
+		"ok - record in collection": {
+			resourceName: "buildings",
+			recordID:     "5",
+			initialData:  testData,
+			wantRecord:   domain.Record{"id": 5, "name": "lab"},
+			wantErr:      nil,
+		},
+		"ok - record in keyed object": {
+			resourceName: "students",
+			recordID:     "Amy",
+			initialData:  testData,
+			wantRecord:   domain.Record{"id": "Amy", "key": "Amy", "value": 20},
+			wantErr:      nil,
+		},
+		"error - record not found in collection": {
+			resourceName: "students",
+			recordID:     "NonExistentStudent",
+			initialData:  testData,
+			wantRecord:   nil,
+			wantErr:      resource.ErrRecordNotFound,
+		},
+		"error - resource not found": {
+			resourceName: "NonExistentResource",
+			recordID:     "AnythingCanGoHere",
+			initialData:  testData,
+			wantRecord:   nil,
+			wantErr:      resource.ErrResourceNotFound,
+		},
+		"error - wrong resource type": {
+			resourceName: "secret_code",
+			recordID:     "any-id",
+			initialData:  testData,
+			wantRecord:   nil,
+			wantErr:      resource.ErrWrongResourceType,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+
+			repo := setupTestEnvironment(t, tc.initialData)
+			ctx := context.Background()
+
+			record, err := repo.GetRecordByID(ctx, tc.resourceName, tc.recordID)
+
+			if tc.wantErr != nil {
+				assert.Error(t, err)
+				assert.ErrorIs(t, err, tc.wantErr)
+
+			} else {
+				assert.NoError(t, err)
+				assert.Len(t, record, len(tc.wantRecord))
+
+				// remember maps are unordered
+				assert.Equal(t, tc.wantRecord, record)
 			}
 		})
 	}

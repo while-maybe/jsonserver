@@ -283,6 +283,7 @@ func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 		}
 
 		switch v := item.(type) {
+		// this can either be a map or a single entry
 		case domain.Record:
 			newRecord := make(domain.Record, len(v)+1)
 
@@ -328,7 +329,8 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 	data, hasData := r.data[resourceName]
 
 	if !hasData {
-		r.data[resourceName] = []any{recordToStore}
+		normalisedRecord := r.normaliseLoadedValue(map[string]any(recordToStore))
+		r.data[resourceName] = []any{normalisedRecord}
 
 		if err := r.persist(); err != nil {
 
@@ -336,7 +338,7 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 			delete(r.data, resourceName)
 			return nil, err
 		}
-		return recordToStore, nil
+		return normalisedRecord.(domain.Record), nil
 	}
 
 	collection, ok := data.([]any)
@@ -354,7 +356,8 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 		}
 	}
 
-	newCollection := append(collection, recordToStore)
+	normalisedRecord := r.normaliseLoadedValue(map[string]any(recordToStore))
+	newCollection := append(collection, normalisedRecord)
 
 	r.data[resourceName] = newCollection
 
@@ -365,7 +368,7 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 		log.Printf("Failed to persist data to %s: %v", r.filename, err)
 		return nil, err
 	}
-	return recordToStore, nil
+	return normalisedRecord.(domain.Record), nil
 }
 
 func (r *jsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, recordKey string, recordData domain.Record) (domain.Record, bool, error) {
@@ -412,7 +415,9 @@ func (r *jsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 	_, keyExisted := keyedObject[recordKey]
 	wasCreated = !keyExisted
 
-	keyedObject[recordKey] = recordToStore
+	normalisedRecord := r.normaliseLoadedValue(map[string]any(recordToStore))
+
+	keyedObject[recordKey] = normalisedRecord
 	r.data[resourceName] = keyedObject
 
 	if err := r.persist(); err != nil {
@@ -427,7 +432,7 @@ func (r *jsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 		return nil, wasCreated, err
 	}
 
-	return recordToStore, wasCreated, nil
+	return normalisedRecord.(domain.Record), wasCreated, nil
 }
 
 func (r *jsonRepository) DeleteRecordFromCollection(ctx context.Context, resourceName, recordID string) error {
@@ -552,7 +557,8 @@ func (r *jsonRepository) UpdateRecordInCollection(ctx context.Context, resourceN
 	newCollection := make([]any, len(collection))
 	copy(newCollection, collection)
 
-	newCollection[recordPos] = recordToStore
+	// Convert domain.Record to map[string]any before normalizing
+	newCollection[recordPos] = r.normaliseLoadedValue(map[string]any(recordToStore))
 
 	r.data[resourceName] = newCollection
 
@@ -563,7 +569,7 @@ func (r *jsonRepository) UpdateRecordInCollection(ctx context.Context, resourceN
 		log.Printf("Failed to persist data to %s: %v", r.filename, err)
 		return nil, err
 	}
-	return recordToStore, nil
+	return newCollection[recordPos].(domain.Record), nil
 }
 
 func (r *jsonRepository) ListResources(ctx context.Context) ([]string, error) {

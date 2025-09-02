@@ -226,7 +226,7 @@ func (r *jsonRepository) GetAllRecords(ctx context.Context, resourceName string)
 		}
 		return result, nil
 
-	case map[string]any:
+	case domain.Record:
 		result := make([]domain.Record, 0, len(value))
 
 		for key, item := range value {

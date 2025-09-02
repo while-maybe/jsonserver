@@ -311,6 +311,10 @@ func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 }
 
 func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, recordData domain.Record) (domain.Record, error) {
+	if resourceName == "" {
+		return nil, resource.ErrEmptyResourceName
+	}
+
 	if err := recordData.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %s", resource.ErrInvalidRecord, err.Error())
 	}

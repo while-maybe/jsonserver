@@ -6,6 +6,7 @@ import (
 	"jsonserver/internal/core/domain"
 	"jsonserver/internal/core/service/resource"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"testing"
@@ -213,6 +214,13 @@ func TestCreateRecord(t *testing.T) {
 			wantReturnedRecord: domain.Record{"id": "50", "name": "garage", "floors": 2},
 			wantErr:            nil,
 		},
+		"error - resource.ErrEmptyResourceName": {
+			resourceName:       "",
+			initialData:        testData,
+			recordToAdd:        domain.Record{"id": "50", "name": "garage", "floors": 2},
+			wantReturnedRecord: nil,
+			wantErr:            resource.ErrEmptyResourceName,
+		},
 		"error - resource.ErrInvalidRecord": {
 			resourceName:       "buildings",
 			initialData:        testData,
@@ -270,6 +278,119 @@ func TestCreateRecord(t *testing.T) {
 			require.NoError(t, err, "Should be able to fetch the persisted record from a new repo instance")
 
 			assert.Equal(t, createdRecord, persistedRecord)
+		})
+	}
+}
+
+func TestUpsertRecordByKey(t *testing.T) {
+	testCases := map[string]struct {
+		initialData        string
+		resourceName       string
+		recordKey          string
+		recordToAdd        domain.Record
+		wantReturnedRecord domain.Record
+		wantNewRecord      bool
+		wantErr            error
+	}{
+		"ok - insert new record in keyed object": {
+			resourceName: "students",
+			recordKey:    "Mary",
+			initialData:  testData,
+			// 31.0 can test float64 to int conversion
+			recordToAdd:        domain.Record{"age": 31.0},
+			wantReturnedRecord: domain.Record{"age": 31},
+			wantNewRecord:      true,
+			wantErr:            nil,
+		}, "ok - update existing record in keyed object": {
+			resourceName: "students",
+			recordKey:    "Amy",
+			initialData:  testData,
+			// 31.0 can test float64 to int conversion
+			recordToAdd:        domain.Record{"age": 10.0},
+			wantReturnedRecord: domain.Record{"age": 10},
+			wantNewRecord:      false,
+			wantErr:            nil,
+		},
+		"error - resource.ErrInvalidRecord": {
+			resourceName:       "students",
+			recordKey:          "Amy",
+			initialData:        testData,
+			recordToAdd:        nil,
+			wantReturnedRecord: nil,
+			wantNewRecord:      false,
+			wantErr:            resource.ErrInvalidRecord,
+		},
+		"error - resource.ErrEmptyRecordKey": {
+			resourceName:       "students",
+			recordKey:          "",
+			initialData:        testData,
+			recordToAdd:        domain.Record{"age": 10.0},
+			wantReturnedRecord: domain.Record{"age": 10},
+			wantNewRecord:      false,
+			wantErr:            resource.ErrEmptyRecordKey,
+		},
+		"error - resource.ErrInvalidResourceName": {
+			resourceName:       "",
+			recordKey:          "Amy",
+			initialData:        testData,
+			recordToAdd:        domain.Record{"age": 10.0},
+			wantReturnedRecord: domain.Record{"age": 10},
+			wantNewRecord:      false,
+			wantErr:            resource.ErrInvalidResourceName,
+		},
+		"error - resource.ErrWrongResourceType": {
+			resourceName:       "buildings",
+			recordKey:          "Amy",
+			initialData:        testData,
+			recordToAdd:        domain.Record{"age": 10.0},
+			wantReturnedRecord: domain.Record{"age": 10},
+			wantNewRecord:      false,
+			wantErr:            resource.ErrWrongResourceType,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+
+			repo, dbFilename := setupTestEnvironment(t, tc.initialData)
+			ctx := context.Background()
+
+			createdRecord, isNewRecord, err := repo.UpsertRecordByKey(ctx, tc.resourceName, tc.recordKey, tc.recordToAdd)
+
+			if tc.wantErr != nil {
+				assert.Error(t, err)
+				assert.ErrorIs(t, err, tc.wantErr)
+				return
+
+			}
+			assert.NoError(t, err)
+
+			// assert is record is newly created or updated
+			assert.Equal(t, tc.wantNewRecord, isNewRecord)
+
+			// assert equal record is returned by CreateRecord
+			assert.Equal(t, tc.wantReturnedRecord, createdRecord)
+
+			// assert equal record in-memory cache
+			inCacheRecord, err := repo.GetRecordByID(ctx, tc.resourceName, tc.recordKey)
+			require.NoError(t, err, "should be able to fetch the newly created record")
+
+			// simply doing inCacheRecord["id"] = tc.recordKey would go against a testing principal which dictates to never alter the outcome of what is being tested - in this case inCacheRecord should not be modified in any way
+			// this also means doing delete(inCacheRecord, "id") above should never be done as it also modifies data to be tested
+			expectedFetchedRecord := make(domain.Record)
+			maps.Copy(expectedFetchedRecord, tc.wantReturnedRecord)
+			expectedFetchedRecord["id"] = tc.recordKey
+
+			assert.Equal(t, expectedFetchedRecord, inCacheRecord)
+
+			// assert equal record in file
+			persistedRepo, err := jsonrepo.NewJsonRepository(dbFilename)
+			require.NoError(t, err, "failed to create a new repo from the persisted file")
+
+			persistedRecord, err := persistedRepo.GetRecordByID(ctx, tc.resourceName, tc.recordKey)
+			require.NoError(t, err, "Should be able to fetch the persisted record from a new repo instance")
+
+			assert.Equal(t, expectedFetchedRecord, persistedRecord)
 		})
 	}
 }

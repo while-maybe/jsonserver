@@ -375,6 +375,9 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 	return normalisedRecord.(domain.Record), nil
 }
 
+// UpsertRecordByKey creates a new record or updates an existing one within a keyed-object resource, returning  the stored record, a boolean that is true if a new record was created (false if updated), and an error if the operation fails, such as when targeting a resource that is a collection.
+// The operation is transactional; it updates the in-memory cache and persists the entire database to disk, rolling back the in-memory change if persistence fails.
+// This method is safe for concurrent use.
 func (r *jsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, recordKey string, recordData domain.Record) (domain.Record, bool, error) {
 	wasCreated := false
 
@@ -404,7 +407,7 @@ func (r *jsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 	var resourceExists bool
 	originalResource, resourceExists = r.data[resourceName]
 
-	keyedObject, isMap := originalResource.(map[string]any)
+	keyedObject, isMap := originalResource.(domain.Record)
 	// the resource already exists but it's not a map
 	if !isMap && resourceExists {
 		return nil, wasCreated, resource.ErrWrongResourceType

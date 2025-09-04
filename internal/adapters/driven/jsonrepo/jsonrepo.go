@@ -126,17 +126,11 @@ func (r *JsonRepository) normaliseLoadedValue(value any) any {
 
 func (r *JsonRepository) denormaliseForPersist(value any) any {
 	switch v := value.(type) {
+	case domain.Record:
+		return r.transformMapItems(v, r.denormaliseForPersist)
+
 	case []any:
-
-		op := func(item any) any {
-			if itemMap, ok := item.(domain.Record); ok {
-				return map[string]any(itemMap)
-			}
-
-			// non-map items are kept as is
-			return item
-		}
-		return r.transformSliceItems(v, op)
+		return r.transformSliceItems(v, r.denormaliseForPersist)
 
 	default:
 		// Keep keyed objects and singular values as-is

@@ -8,7 +8,6 @@ import (
 	"math"
 	"sort"
 
-	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"jsonserver/internal/core/domain"
 	"jsonserver/internal/core/service/resource"
@@ -16,26 +15,24 @@ import (
 	"sync"
 )
 
-// below is placed here so import doesn't complain
-
-type jsonRepository struct {
-	filename string
-	mu       sync.RWMutex
-	data     map[string]any // in-memory cache
+type JsonRepository struct {
+	P    persister // Exported for testing
+	mu   sync.RWMutex
+	data map[string]any // in-memory cache
 }
 
-var _ resource.Repository = (*jsonRepository)(nil)
+var _ resource.Repository = (*JsonRepository)(nil)
 
 func NewJsonRepository(filename string) (resource.Repository, error) {
-	repo := &jsonRepository{
-		filename: filename,
-		data:     make(map[string]any),
+	repo := &JsonRepository{
+		P:    NewFilePersister(filename),
+		data: make(map[string]any),
 	}
 
 	repo.mu.Lock()
 	defer repo.mu.Unlock()
 
-	if err := repo.load(); err != nil {
+	if err := repo.loadFromFile(filename); err != nil {
 		if os.IsNotExist(err) {
 			return repo, nil
 		}
@@ -46,11 +43,9 @@ func NewJsonRepository(filename string) (resource.Repository, error) {
 	return repo, nil
 }
 
-const defaultFilePermissions = os.FileMode(0644)
+func (r *JsonRepository) loadFromFile(filename string) error {
 
-func (r *jsonRepository) load() error {
-
-	bytes, err := os.ReadFile(r.filename)
+	bytes, err := os.ReadFile(filename)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -76,26 +71,17 @@ func (r *jsonRepository) load() error {
 }
 
 // persist writes the entire in-memory cache back to the JSON file
-func (r *jsonRepository) persist() error {
-
-	f, err := os.OpenFile(r.filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, defaultFilePermissions)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
+func (r *JsonRepository) persist() error {
 	denormalisedData := make(map[string]any)
 	for resourceName, resourceValue := range r.data {
 		denormalisedData[resourceName] = r.denormaliseForPersist(resourceValue)
 	}
 
-	opts := jsonv2.JoinOptions(jsontext.Multiline(true), jsontext.WithIndent("  "))
-
-	return jsonv2.MarshalWrite(f, denormalisedData, opts)
+	return r.P.Persist(denormalisedData)
 }
 
 // transformSliceItems takes a collection and applies a transformer function to each item returning a same length collection - think .map() in JS
-func (r *jsonRepository) transformSliceItems(slice []any, transformer func(any) any) []any {
+func (r *JsonRepository) transformSliceItems(slice []any, transformer func(any) any) []any {
 	result := make([]any, len(slice))
 
 	for i, item := range slice {
@@ -105,7 +91,7 @@ func (r *jsonRepository) transformSliceItems(slice []any, transformer func(any) 
 	return result
 }
 
-func (j *jsonRepository) transformMapItems(m map[string]any, transformer func(any) any) domain.Record {
+func (j *JsonRepository) transformMapItems(m map[string]any, transformer func(any) any) domain.Record {
 	normalisedMap := make(map[string]any, len(m))
 
 	for key, value := range m {
@@ -116,7 +102,7 @@ func (j *jsonRepository) transformMapItems(m map[string]any, transformer func(an
 	return domain.Record(normalisedMap)
 }
 
-func (r *jsonRepository) normaliseLoadedValue(value any) any {
+func (r *JsonRepository) normaliseLoadedValue(value any) any {
 	switch v := value.(type) {
 	case float64:
 		// if the number has no fractional part, convert and return to int
@@ -138,7 +124,7 @@ func (r *jsonRepository) normaliseLoadedValue(value any) any {
 	}
 }
 
-func (r *jsonRepository) denormaliseForPersist(value any) any {
+func (r *JsonRepository) denormaliseForPersist(value any) any {
 	switch v := value.(type) {
 	case []any:
 
@@ -158,7 +144,7 @@ func (r *jsonRepository) denormaliseForPersist(value any) any {
 	}
 }
 
-func (r *jsonRepository) getResourceType(data any) resource.ResourceType {
+func (r *JsonRepository) getResourceType(data any) resource.ResourceType {
 	if data == nil {
 		return resource.ResourceTypeUnknown
 	}
@@ -173,7 +159,7 @@ func (r *jsonRepository) getResourceType(data any) resource.ResourceType {
 	}
 }
 
-func (r *jsonRepository) findRecordByID(collection []any, recordID string) (domain.Record, int) {
+func (r *JsonRepository) findRecordByID(collection []any, recordID string) (domain.Record, int) {
 
 	for i, item := range collection {
 
@@ -188,14 +174,14 @@ func (r *jsonRepository) findRecordByID(collection []any, recordID string) (doma
 	return nil, -1
 }
 
-func (r *jsonRepository) GetResourceType(ctx context.Context, resourceName string) resource.ResourceType {
+func (r *JsonRepository) GetResourceType(ctx context.Context, resourceName string) resource.ResourceType {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	return r.getResourceType(r.data[resourceName])
 }
 
-func (r *jsonRepository) GetAllRecords(ctx context.Context, resourceName string) ([]domain.Record, error) {
+func (r *JsonRepository) GetAllRecords(ctx context.Context, resourceName string) ([]domain.Record, error) {
 	if resourceName == "" {
 		return nil, resource.ErrEmptyResourceName
 	}
@@ -247,7 +233,7 @@ func (r *jsonRepository) GetAllRecords(ctx context.Context, resourceName string)
 	}
 }
 
-func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, recordID string) (domain.Record, error) {
+func (r *JsonRepository) GetRecordByID(ctx context.Context, resourceName, recordID string) (domain.Record, error) {
 	if recordID == "" {
 		return nil, resource.ErrEmptyRecordKey
 	}
@@ -310,7 +296,7 @@ func (r *jsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 	}
 }
 
-func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, recordData domain.Record) (domain.Record, error) {
+func (r *JsonRepository) CreateRecord(ctx context.Context, resourceName string, recordData domain.Record) (domain.Record, error) {
 	if resourceName == "" {
 		return nil, resource.ErrEmptyResourceName
 	}
@@ -369,7 +355,7 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 		// revert changes if not possible to save to file
 		r.data[resourceName] = collection
 
-		log.Printf("Failed to persist data to %s: %v", r.filename, err)
+		log.Printf("Persistence failed, rolling back change for resource '%s': %v", resourceName, err)
 		return nil, err
 	}
 	return normalisedRecord.(domain.Record), nil
@@ -378,7 +364,7 @@ func (r *jsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 // UpsertRecordByKey creates a new record or updates an existing one within a keyed-object resource, returning  the stored record, a boolean that is true if a new record was created (false if updated), and an error if the operation fails, such as when targeting a resource that is a collection.
 // The operation is transactional; it updates the in-memory cache and persists the entire database to disk, rolling back the in-memory change if persistence fails.
 // This method is safe for concurrent use.
-func (r *jsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, recordKey string, recordData domain.Record) (domain.Record, bool, error) {
+func (r *JsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, recordKey string, recordData domain.Record) (domain.Record, bool, error) {
 	wasCreated := false
 
 	if err := recordData.Validate(); err != nil {
@@ -435,14 +421,14 @@ func (r *jsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 			r.data[resourceName] = originalResource
 		}
 
-		log.Printf("Failed to persist data to %s: %v", r.filename, err)
+		log.Printf("Persistence failed, rolling back change for resource '%s': %v", resourceName, err)
 		return nil, wasCreated, err
 	}
 
 	return normalisedRecord.(domain.Record), wasCreated, nil
 }
 
-func (r *jsonRepository) DeleteRecordFromCollection(ctx context.Context, resourceName, recordID string) error {
+func (r *JsonRepository) DeleteRecordFromCollection(ctx context.Context, resourceName, recordID string) error {
 
 	if recordID == "" {
 		return resource.ErrEmptyRecordID
@@ -477,14 +463,14 @@ func (r *jsonRepository) DeleteRecordFromCollection(ctx context.Context, resourc
 
 		r.data[resourceName] = collection
 
-		log.Printf("Failed to persist data to %s: %v", r.filename, err)
+		log.Printf("Persistence failed, rolling back change for resource '%s': %v", resourceName, err)
 		return err
 	}
 
 	return nil
 }
 
-func (r *jsonRepository) DeleteRecordByKey(ctx context.Context, resourceName, recordKey string) error {
+func (r *JsonRepository) DeleteRecordByKey(ctx context.Context, resourceName, recordKey string) error {
 
 	if recordKey == "" {
 		return resource.ErrEmptyRecordKey
@@ -529,7 +515,7 @@ func (r *jsonRepository) DeleteRecordByKey(ctx context.Context, resourceName, re
 	return nil
 }
 
-func (r *jsonRepository) UpdateRecordInCollection(ctx context.Context, resourceName, recordID string, recordData domain.Record) (domain.Record, error) {
+func (r *JsonRepository) UpdateRecordInCollection(ctx context.Context, resourceName, recordID string, recordData domain.Record) (domain.Record, error) {
 	if err := recordData.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %s", resource.ErrInvalidRecord, err.Error())
 	}
@@ -573,13 +559,13 @@ func (r *jsonRepository) UpdateRecordInCollection(ctx context.Context, resourceN
 		// revert changes if not possible to save to file
 		r.data[resourceName] = collection
 
-		log.Printf("Failed to persist data to %s: %v", r.filename, err)
+		log.Printf("Persistence failed, rolling back change for resource '%s': %v", resourceName, err)
 		return nil, err
 	}
 	return newCollection[recordPos].(domain.Record), nil
 }
 
-func (r *jsonRepository) ListResources(ctx context.Context) ([]string, error) {
+func (r *JsonRepository) ListResources(ctx context.Context) ([]string, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

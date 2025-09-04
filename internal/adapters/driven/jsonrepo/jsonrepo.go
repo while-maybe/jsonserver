@@ -174,6 +174,22 @@ func (r *JsonRepository) findRecordByID(collection []any, recordID string) (doma
 	return nil, -1
 }
 
+func (r *JsonRepository) asCollection(data any) ([]any, error) {
+	collection, ok := data.([]any)
+	if !ok {
+		return nil, resource.ErrWrongResourceType
+	}
+	return collection, nil
+}
+
+func (r *JsonRepository) asKeyedObject(data any) (domain.Record, error) {
+	keyedObject, ok := data.(domain.Record)
+	if !ok {
+		return nil, resource.ErrWrongResourceType
+	}
+	return keyedObject, nil
+}
+
 func (r *JsonRepository) GetResourceType(ctx context.Context, resourceName string) resource.ResourceType {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -331,8 +347,8 @@ func (r *JsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 		return normalisedRecord.(domain.Record), nil
 	}
 
-	collection, ok := data.([]any)
-	if !ok {
+	collection, err := r.asCollection(data)
+	if err != nil {
 		return nil, resource.ErrWrongResourceType
 	}
 
@@ -389,9 +405,7 @@ func (r *JsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	var originalResource any
-	var resourceExists bool
-	originalResource, resourceExists = r.data[resourceName]
+	originalResource, resourceExists := r.data[resourceName]
 
 	keyedObject, isMap := originalResource.(domain.Record)
 	// the resource already exists but it's not a map
@@ -446,9 +460,9 @@ func (r *JsonRepository) DeleteRecordFromCollection(ctx context.Context, resourc
 		return resource.ErrResourceNotFound
 	}
 
-	collection, isCollection := data.([]any)
-	if !isCollection {
-		return resource.ErrWrongResourceType
+	collection, err := r.asCollection(data)
+	if err != nil {
+		return err
 	}
 
 	_, targetIndex := r.findRecordByID(collection, recordID)
@@ -488,9 +502,9 @@ func (r *JsonRepository) DeleteRecordByKey(ctx context.Context, resourceName, re
 		return resource.ErrResourceNotFound
 	}
 
-	keyedObject, isMap := originalResource.(map[string]any)
-	if !isMap {
-		return resource.ErrWrongResourceType
+	keyedObject, err := r.asKeyedObject(originalResource)
+	if err != nil {
+		return err
 	}
 
 	if _, keyExists := keyedObject[recordKey]; !keyExists {
@@ -537,9 +551,9 @@ func (r *JsonRepository) UpdateRecordInCollection(ctx context.Context, resourceN
 		return nil, resource.ErrInvalidResourceName
 	}
 
-	collection, ok := data.([]any)
-	if !ok {
-		return nil, resource.ErrWrongResourceType
+	collection, err := r.asCollection(data)
+	if err != nil {
+		return nil, err
 	}
 
 	_, recordPos := r.findRecordByID(collection, recordID)

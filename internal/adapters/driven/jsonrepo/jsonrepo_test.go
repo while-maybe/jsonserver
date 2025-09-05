@@ -21,9 +21,9 @@ const testData = `{
 		"David": 25
 	},
 	"buildings": [
-		{"id": 5, "name": "lab"},
-		{"id": 10, "name": "reception"},
-		{"id": 25, "name": "classroom"}
+		{"id": "5", "name": "lab"},
+		{"id": "10", "name": "reception"},
+		{"id": "25", "name": "classroom"}
 	],
 	"secret_code": 101
 }`
@@ -55,9 +55,9 @@ func TestGetAllRecords(t *testing.T) {
 			resourceName: "buildings",
 			initialData:  testData,
 			wantRecords: []domain.Record{
-				{"id": 5, "name": "lab"},
-				{"id": 10, "name": "reception"},
-				{"id": 25, "name": "classroom"},
+				{"id": "5", "name": "lab"},
+				{"id": "10", "name": "reception"},
+				{"id": "25", "name": "classroom"},
 			},
 			wantErr: nil,
 		},
@@ -82,9 +82,9 @@ func TestGetAllRecords(t *testing.T) {
 			resourceName: "",
 			initialData:  testData,
 			wantRecords: []domain.Record{
-				{"id": 5, "name": "lab"},
-				{"id": 10, "name": "reception"},
-				{"id": 25, "name": "classroom"},
+				{"id": "5", "name": "lab"},
+				{"id": "10", "name": "reception"},
+				{"id": "25", "name": "classroom"},
 			},
 			wantErr: resource.ErrEmptyResourceName,
 		},
@@ -137,7 +137,7 @@ func TestGetRecordByID(t *testing.T) {
 			resourceName: "buildings",
 			recordID:     "5",
 			initialData:  testData,
-			wantRecord:   domain.Record{"id": 5, "name": "lab"},
+			wantRecord:   domain.Record{"id": "5", "name": "lab"},
 			wantErr:      nil,
 		},
 		"ok - record in keyed object": {
@@ -336,7 +336,7 @@ func TestUpsertRecordByKey(t *testing.T) {
 			recordToAdd:        domain.Record{"age": 10.0},
 			wantReturnedRecord: domain.Record{"age": 10},
 			wantNewRecord:      false,
-			wantErr:            resource.ErrInvalidResourceName,
+			wantErr:            resource.ErrEmptyResourceName,
 		},
 		"error - resource.ErrWrongResourceType": {
 			resourceName:       "buildings",
@@ -388,9 +388,108 @@ func TestUpsertRecordByKey(t *testing.T) {
 			require.NoError(t, err, "failed to create a new repo from the persisted file")
 
 			persistedRecord, err := persistedRepo.GetRecordByID(ctx, tc.resourceName, tc.recordKey)
-			require.NoError(t, err, "Should be able to fetch the persisted record from a new repo instance")
+			require.NoError(t, err, "should be able to fetch the persisted record from a new repo instance")
 
 			assert.Equal(t, expectedFetchedRecord, persistedRecord)
+		})
+	}
+}
+
+func TestDeleteRecordFromCollection(t *testing.T) {
+	testCases := map[string]struct {
+		initialData      string
+		resourceName     string
+		recordIDtoDelete string
+		wantCollection   []domain.Record
+		wantResult       bool
+		wantErr          error
+	}{
+		"ok - delete a record from a collection": {
+			initialData:      testData,
+			resourceName:     "buildings",
+			recordIDtoDelete: "5",
+			wantCollection:   []domain.Record{{"id": "10", "name": "reception"}, {"id": "25", "name": "classroom"}},
+			wantResult:       true,
+			wantErr:          nil,
+		},
+		"ok - delete the last record from a collection": {
+			initialData:      `{"buildings": [{"id": "5", "name": "lab"}]}`,
+			resourceName:     "buildings",
+			recordIDtoDelete: "5",
+			wantCollection:   []domain.Record{},
+			wantResult:       true,
+			wantErr:          nil,
+		},
+		"error - resource.ErrEmptyResourceName": {
+			initialData:      testData,
+			resourceName:     "",
+			recordIDtoDelete: "5",
+			wantCollection:   nil,
+			wantResult:       false,
+			wantErr:          resource.ErrEmptyResourceName,
+		},
+		"error - resource.ErrEmptyRecordID": {
+			initialData:      testData,
+			resourceName:     "buildings",
+			recordIDtoDelete: "",
+			wantCollection:   []domain.Record{{"id": "5", "name": "lab"}, {"id": "10", "name": "reception"}, {"id": "25", "name": "classroom"}},
+			wantResult:       false,
+			wantErr:          resource.ErrEmptyRecordID,
+		},
+		"error - resource.ErrResourceNotFound": {
+			initialData:      testData,
+			resourceName:     "doesNotExist",
+			recordIDtoDelete: "5",
+			wantCollection:   nil,
+			wantResult:       false,
+			wantErr:          resource.ErrResourceNotFound,
+		},
+		"error - resource.ErrRecordNotFound": {
+			initialData:      testData,
+			resourceName:     "buildings",
+			recordIDtoDelete: "1000",
+			wantCollection:   []domain.Record{{"id": "5", "name": "lab"}, {"id": "10", "name": "reception"}, {"id": "25", "name": "classroom"}},
+			wantResult:       false,
+			wantErr:          resource.ErrRecordNotFound,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+
+			repo, dbFilename := setupTestEnvironment(t, tc.initialData)
+			ctx := context.Background()
+
+			err := repo.DeleteRecordFromCollection(ctx, tc.resourceName, tc.recordIDtoDelete)
+
+			if tc.wantErr != nil {
+				assert.Error(t, err)
+				assert.ErrorIs(t, err, tc.wantErr)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			// check if data is the expected after operation fails
+			if tc.wantCollection == nil {
+				return
+			}
+			// get in-memory cache resource after deletion
+			recordsInCache, err := repo.GetAllRecords(ctx, tc.resourceName)
+			require.NoError(t, err, "failed to get collection in cache")
+
+			// assert in-memory cache wanted collection
+			assert.Len(t, recordsInCache, len(tc.wantCollection))
+			assert.ElementsMatch(t, tc.wantCollection, recordsInCache)
+
+			// get a new repo from test file
+			persistedRepo, err := jsonrepo.NewJsonRepository(dbFilename)
+			require.NoError(t, err, "failed to create a new repo from the persisted file")
+
+			recordsInFile, err := persistedRepo.GetAllRecords(ctx, tc.resourceName)
+			require.NoError(t, err, "should be able to fetch the persisted record from a new repo instance")
+
+			// assert wanted collection in file
+			assert.ElementsMatch(t, tc.wantCollection, recordsInFile)
 		})
 	}
 }

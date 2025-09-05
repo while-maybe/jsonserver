@@ -184,6 +184,27 @@ func (r *JsonRepository) asKeyedObject(data any) (domain.Record, error) {
 	return keyedObject, nil
 }
 
+func (r *JsonRepository) validateResourceName(name string) error {
+	if name == "" {
+		return resource.ErrEmptyResourceName
+	}
+	return nil
+}
+
+func (r *JsonRepository) validateRecordID(name string) error {
+	if name == "" {
+		return resource.ErrEmptyRecordID
+	}
+	return nil
+}
+
+func (r *JsonRepository) validateRecordKey(name string) error {
+	if name == "" {
+		return resource.ErrEmptyRecordKey
+	}
+	return nil
+}
+
 func (r *JsonRepository) GetResourceType(ctx context.Context, resourceName string) resource.ResourceType {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -192,8 +213,8 @@ func (r *JsonRepository) GetResourceType(ctx context.Context, resourceName strin
 }
 
 func (r *JsonRepository) GetAllRecords(ctx context.Context, resourceName string) ([]domain.Record, error) {
-	if resourceName == "" {
-		return nil, resource.ErrEmptyResourceName
+	if err := r.validateResourceName(resourceName); err != nil {
+		return nil, err
 	}
 
 	r.mu.RLock()
@@ -244,12 +265,12 @@ func (r *JsonRepository) GetAllRecords(ctx context.Context, resourceName string)
 }
 
 func (r *JsonRepository) GetRecordByID(ctx context.Context, resourceName, recordID string) (domain.Record, error) {
-	if recordID == "" {
-		return nil, resource.ErrEmptyRecordKey
+	if err := r.validateResourceName(resourceName); err != nil {
+		return nil, err
 	}
 
-	if resourceName == "" {
-		return nil, resource.ErrEmptyResourceName
+	if err := r.validateRecordID(recordID); err != nil {
+		return nil, err
 	}
 
 	r.mu.RLock()
@@ -307,8 +328,8 @@ func (r *JsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 }
 
 func (r *JsonRepository) CreateRecord(ctx context.Context, resourceName string, recordData domain.Record) (domain.Record, error) {
-	if resourceName == "" {
-		return nil, resource.ErrEmptyResourceName
+	if err := r.validateResourceName(resourceName); err != nil {
+		return nil, err
 	}
 
 	if err := recordData.Validate(); err != nil {
@@ -377,16 +398,16 @@ func (r *JsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 func (r *JsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, recordKey string, recordData domain.Record) (domain.Record, bool, error) {
 	wasCreated := false
 
+	if err := r.validateResourceName(resourceName); err != nil {
+		return nil, wasCreated, err
+	}
+
+	if err := r.validateRecordKey(recordKey); err != nil {
+		return nil, wasCreated, err
+	}
+
 	if err := recordData.Validate(); err != nil {
 		return nil, wasCreated, fmt.Errorf("%w: %s", resource.ErrInvalidRecord, err.Error())
-	}
-
-	if recordKey == "" {
-		return nil, wasCreated, resource.ErrEmptyRecordKey
-	}
-
-	if resourceName == "" {
-		return nil, wasCreated, resource.ErrInvalidResourceName
 	}
 
 	recordToStore := make(domain.Record, len(recordData))
@@ -437,13 +458,12 @@ func (r *JsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 }
 
 func (r *JsonRepository) DeleteRecordFromCollection(ctx context.Context, resourceName, recordID string) error {
-
-	if recordID == "" {
-		return resource.ErrEmptyRecordID
+	if err := r.validateResourceName(resourceName); err != nil {
+		return err
 	}
 
-	if resourceName == "" {
-		return resource.ErrEmptyResourceName
+	if err := r.validateRecordID(recordID); err != nil {
+		return err
 	}
 
 	r.mu.Lock()
@@ -479,13 +499,12 @@ func (r *JsonRepository) DeleteRecordFromCollection(ctx context.Context, resourc
 }
 
 func (r *JsonRepository) DeleteRecordByKey(ctx context.Context, resourceName, recordKey string) error {
-
-	if recordKey == "" {
-		return resource.ErrEmptyRecordKey
+	if err := r.validateResourceName(resourceName); err != nil {
+		return err
 	}
 
-	if resourceName == "" {
-		return resource.ErrEmptyResourceName
+	if err := r.validateRecordKey(recordKey); err != nil {
+		return err
 	}
 
 	r.mu.Lock()
@@ -524,6 +543,14 @@ func (r *JsonRepository) DeleteRecordByKey(ctx context.Context, resourceName, re
 }
 
 func (r *JsonRepository) UpdateRecordInCollection(ctx context.Context, resourceName, recordID string, recordData domain.Record) (domain.Record, error) {
+	if err := r.validateResourceName(resourceName); err != nil {
+		return nil, err
+	}
+
+	if err := r.validateRecordID(recordID); err != nil {
+		return nil, err
+	}
+
 	if err := recordData.Validate(); err != nil {
 		return nil, fmt.Errorf("%w: %s", resource.ErrInvalidRecord, err.Error())
 	}

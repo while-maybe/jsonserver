@@ -524,7 +524,7 @@ func (r *JsonRepository) DeleteRecordByKey(ctx context.Context, resourceName, re
 		return resource.ErrRecordNotFound
 	}
 
-	newKeyedObject := make(map[string]any, len(keyedObject))
+	newKeyedObject := make(domain.Record, len(keyedObject))
 	maps.Copy(newKeyedObject, keyedObject)
 
 	delete(newKeyedObject, recordKey)

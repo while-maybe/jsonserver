@@ -16,7 +16,7 @@ import (
 )
 
 type JsonRepository struct {
-	P    persister // Exported for testing
+	p    Persister // Exported for testing
 	mu   sync.RWMutex
 	data map[string]any // in-memory cache
 }
@@ -24,13 +24,16 @@ type JsonRepository struct {
 var _ resource.Repository = (*JsonRepository)(nil)
 
 func NewJsonRepository(filename string) (resource.Repository, error) {
+
+	return NewJsonRepositoryWithPersister(filename, NewFilePersister(filename))
+}
+
+// NewJsonRepositoryWithPersister is the constructor for testing or custom persistence. It is EXPORTED so the _test package can call it.
+func NewJsonRepositoryWithPersister(filename string, p Persister) (resource.Repository, error) {
 	repo := &JsonRepository{
-		P:    NewFilePersister(filename),
+		p:    p,
 		data: make(map[string]any),
 	}
-
-	repo.mu.Lock()
-	defer repo.mu.Unlock()
 
 	if err := repo.loadFromFile(filename); err != nil {
 		if os.IsNotExist(err) {
@@ -77,7 +80,7 @@ func (r *JsonRepository) persist() error {
 		denormalisedData[resourceName] = r.denormaliseForPersist(resourceValue)
 	}
 
-	return r.P.Persist(denormalisedData)
+	return r.p.Persist(denormalisedData)
 }
 
 // transformSliceItems takes a collection and applies a transformer function to each item returning a same length collection - think .map() in JS

@@ -10,7 +10,8 @@ import (
 
 const defaultFilePermissions = os.FileMode(0644)
 
-type persister interface {
+// Needs to be exported so we can call in when in tests
+type Persister interface {
 	Persist(data map[string]any) error
 }
 

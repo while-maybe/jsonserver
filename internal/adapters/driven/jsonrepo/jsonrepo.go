@@ -569,7 +569,7 @@ func (r *JsonRepository) UpdateRecordInCollection(ctx context.Context, resourceN
 	data, hasData := r.data[resourceName]
 
 	if !hasData {
-		return nil, resource.ErrInvalidResourceName
+		return nil, resource.ErrResourceNotFound
 	}
 
 	collection, err := r.asCollection(data)

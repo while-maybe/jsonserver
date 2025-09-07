@@ -29,6 +29,8 @@ const testData = `{
 }`
 
 func setupTestEnvironment(t *testing.T, initialData string) (resource.Repository, string) {
+	t.Helper()
+
 	tempDir := t.TempDir()
 	dbFilename := filepath.Join(tempDir, "test_db.json")
 
@@ -546,6 +548,13 @@ func TestDeleteRecordByKey(t *testing.T) {
 			wantKeyedObject:   []domain.Record{{"key": "Amy", "value": 20}, {"key": "David", "value": 25}},
 			wantErr:           resource.ErrRecordNotFound,
 		},
+		"error - resource.ErrWrongResourceType": {
+			initialData:       testData,
+			resourceName:      "buildings",
+			recordKeytoDelete: "Amy",
+			wantKeyedObject:   nil,
+			wantErr:           resource.ErrWrongResourceType,
+		},
 	}
 
 	for name, tc := range testCases {
@@ -569,6 +578,118 @@ func TestDeleteRecordByKey(t *testing.T) {
 			}
 
 			verifyResourceState(t, ctx, repo, dbFilename, tc.resourceName, tc.wantKeyedObject)
+		})
+	}
+}
+
+func TestUpdateRecordInCollection(t *testing.T) {
+	testCases := map[string]struct {
+		resourceName       string
+		initialData        string
+		recordID           string
+		recordToUpdate     domain.Record
+		wantReturnedRecord domain.Record
+		wantCollection     []domain.Record
+		wantErr            error
+	}{
+		"ok - update record in collection": {
+			resourceName:       "buildings",
+			initialData:        testData,
+			recordID:           "25",
+			recordToUpdate:     domain.Record{"id": "25", "name": "shop", "floors": 2},
+			wantReturnedRecord: domain.Record{"id": "25", "name": "shop", "floors": 2},
+			wantCollection:     []domain.Record{{"id": "5", "name": "lab"}, {"id": "10", "name": "reception"}, {"id": "25", "name": "shop", "floors": 2}},
+			wantErr:            nil,
+		},
+		"error - resource.ErrEmptyResourceName": {
+			resourceName:       "",
+			initialData:        testData,
+			recordID:           "25",
+			recordToUpdate:     domain.Record{"id": "50", "name": "garage", "floors": 2},
+			wantReturnedRecord: nil,
+			wantCollection:     nil,
+			wantErr:            resource.ErrEmptyResourceName,
+		},
+		"error - resource.ErrEmptyRecordID": {
+			resourceName:       "buildings",
+			initialData:        testData,
+			recordID:           "",
+			recordToUpdate:     domain.Record{"id": "25", "name": "shop", "floors": 2},
+			wantReturnedRecord: nil,
+			wantCollection:     []domain.Record{{"id": "5", "name": "lab"}, {"id": "10", "name": "reception"}, {"id": "25", "name": "classroom"}},
+			wantErr:            resource.ErrEmptyRecordID,
+		},
+		"error - resource.ErrInvalidRecord": {
+			resourceName:       "buildings",
+			initialData:        testData,
+			recordID:           "25",
+			recordToUpdate:     domain.Record{"id": 25, "name": "shop", "floors": 2},
+			wantReturnedRecord: nil,
+			wantCollection:     []domain.Record{{"id": "5", "name": "lab"}, {"id": "10", "name": "reception"}, {"id": "25", "name": "classroom"}},
+			wantErr:            resource.ErrInvalidRecord,
+		},
+		"error - resource.ErrMismatchedID": {
+			resourceName:       "buildings",
+			initialData:        testData,
+			recordID:           "999",
+			recordToUpdate:     domain.Record{"id": "25", "name": "shop", "floors": 2},
+			wantReturnedRecord: nil,
+			wantCollection:     []domain.Record{{"id": "5", "name": "lab"}, {"id": "10", "name": "reception"}, {"id": "25", "name": "classroom"}},
+			wantErr:            resource.ErrMismatchedID,
+		},
+		"error - resource.ErrWrongResourceType": {
+			resourceName:       "students",
+			initialData:        testData,
+			recordID:           "50",
+			recordToUpdate:     domain.Record{"id": "50", "name": "garage", "floors": 2},
+			wantReturnedRecord: nil,
+			wantCollection:     []domain.Record{{"key": "Amy", "value": 20}, {"key": "David", "value": 25}},
+			wantErr:            resource.ErrWrongResourceType,
+		},
+		"error - resource.ErrResourceNotFound": {
+			resourceName:       "doesNotExist",
+			initialData:        testData,
+			recordID:           "50",
+			recordToUpdate:     domain.Record{"id": "50", "name": "garage", "floors": 2},
+			wantReturnedRecord: nil,
+			wantCollection:     nil,
+			wantErr:            resource.ErrResourceNotFound,
+		},
+		"error - resource.ErrRecordNotFound": {
+			resourceName:       "buildings",
+			initialData:        testData,
+			recordID:           "999",
+			recordToUpdate:     domain.Record{"id": "999", "name": "shop", "floors": 2},
+			wantReturnedRecord: nil,
+			wantCollection:     []domain.Record{{"id": "5", "name": "lab"}, {"id": "10", "name": "reception"}, {"id": "25", "name": "classroom"}},
+			wantErr:            resource.ErrRecordNotFound,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+
+			repo, dbFilename := setupTestEnvironment(t, tc.initialData)
+			ctx := context.Background()
+
+			updatedRecord, err := repo.UpdateRecordInCollection(ctx, tc.resourceName, tc.recordID, tc.recordToUpdate)
+
+			if tc.wantErr != nil {
+				assert.Error(t, err)
+				assert.ErrorIs(t, err, tc.wantErr)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			// check if data is the expected after operation fails
+			if tc.wantReturnedRecord == nil {
+				return
+			}
+
+			// assert equal record is returned by CreateRecord
+			assert.Equal(t, tc.wantReturnedRecord, updatedRecord)
+
+			verifyResourceState(t, ctx, repo, dbFilename, tc.resourceName, tc.wantCollection)
 		})
 	}
 }

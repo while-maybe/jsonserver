@@ -2,6 +2,7 @@ package jsonrepo_test
 
 import (
 	"context"
+	"errors"
 	"jsonserver/internal/adapters/driven/jsonrepo"
 	"jsonserver/internal/core/domain"
 	"jsonserver/internal/core/service/resource"
@@ -319,20 +320,18 @@ func TestUpsertRecordByKey(t *testing.T) {
 		wantErr            error
 	}{
 		"ok - insert new record in keyed object": {
-			resourceName: "students",
-			recordKey:    "Mary",
-			initialData:  testData,
-			// 31.0 can test float64 to int conversion
-			recordToAdd:        domain.Record{"age": 31.0},
+			resourceName:       "students",
+			recordKey:          "Mary",
+			initialData:        testData,
+			recordToAdd:        domain.Record{"age": 31.0}, // 31.0 can test float64 to int conversion
 			wantReturnedRecord: domain.Record{"age": 31},
 			wantNewRecord:      true,
 			wantErr:            nil,
 		}, "ok - update existing record in keyed object": {
-			resourceName: "students",
-			recordKey:    "Amy",
-			initialData:  testData,
-			// 31.0 can test float64 to int conversion
-			recordToAdd:        domain.Record{"age": 10.0},
+			resourceName:       "students",
+			recordKey:          "Amy",
+			initialData:        testData,
+			recordToAdd:        domain.Record{"age": 10.0}, // 31.0 can test float64 to int conversion
 			wantReturnedRecord: domain.Record{"age": 10},
 			wantNewRecord:      false,
 			wantErr:            nil,
@@ -692,4 +691,83 @@ func TestUpdateRecordInCollection(t *testing.T) {
 			verifyResourceState(t, ctx, repo, dbFilename, tc.resourceName, tc.wantCollection)
 		})
 	}
+}
+
+// test persist below
+
+type mockPersister struct {
+	ErrToReturn error
+}
+
+func (m *mockPersister) Persist(data map[string]any) error {
+	return m.ErrToReturn
+}
+
+const defaultFilePermissions = os.FileMode(0644)
+
+func createRepoWithMockPersister(t *testing.T, initialData string, p jsonrepo.Persister) resource.Repository {
+	t.Helper()
+
+	tempDir := t.TempDir()
+	filename := filepath.Join(tempDir, "temp_db.json")
+
+	err := os.WriteFile(filename, []byte(initialData), defaultFilePermissions)
+	require.NoError(t, err)
+
+	repo, err := jsonrepo.NewJsonRepositoryWithPersister(filename, p)
+	require.NoError(t, err)
+
+	return repo
+}
+
+func TestCreateRecord_PersistFailure(t *testing.T) {
+
+	mockError := errors.New("disk is full") // some made up error here is fine for now
+	mockP := &mockPersister{ErrToReturn: mockError}
+
+	repo := createRepoWithMockPersister(t, testData, mockP)
+	ctx := context.Background()
+
+	resourceName := "buildings"
+	stateBefore, err := repo.GetAllRecords(ctx, resourceName)
+	require.NoError(t, err, "could not get initial state")
+	require.NotEmpty(t, stateBefore, "initial state should not be empty for this test")
+
+	recordToAdd := domain.Record{"id": "50", "name": "garage", "floors": 2}
+
+	_, err = repo.CreateRecord(ctx, resourceName, recordToAdd)
+	require.Error(t, err) // opp should fail - persist error
+	assert.ErrorIs(t, err, mockError)
+
+	stateAfter, err := repo.GetAllRecords(ctx, resourceName)
+	require.NoError(t, err, "could not get final state")
+
+	assert.ElementsMatch(t, stateBefore, stateAfter, "cache should have rolled back")
+}
+
+func TestUpserRecordByKey_PersistFailure(t *testing.T) {
+
+	mockError := errors.New("disk is full") // some made up error here is fine for now
+	mockP := &mockPersister{ErrToReturn: mockError}
+
+	repo := createRepoWithMockPersister(t, testData, mockP)
+	ctx := context.Background()
+
+	resourceName := "students"
+	recordKey := "Amy"
+
+	stateBefore, err := repo.GetAllRecords(ctx, resourceName)
+	require.NoError(t, err, "could not get initial state")
+	require.NotEmpty(t, stateBefore, "initial state should not be empty for this test")
+
+	recordToAdd := domain.Record{"value": 10}
+
+	_, _, err = repo.UpsertRecordByKey(ctx, resourceName, recordKey, recordToAdd)
+	require.Error(t, err) // opp should fail - persist error
+	assert.ErrorIs(t, err, mockError)
+
+	stateAfter, err := repo.GetAllRecords(ctx, resourceName)
+	require.NoError(t, err, "could not get final state")
+
+	assert.ElementsMatch(t, stateBefore, stateAfter, "cache should have rolled back")
 }

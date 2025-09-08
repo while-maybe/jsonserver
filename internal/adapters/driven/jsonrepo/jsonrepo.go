@@ -415,35 +415,43 @@ func (r *JsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 
 	recordToStore := make(domain.Record, len(recordData))
 	maps.Copy(recordToStore, recordData)
-
-	const IDField = "id"
-	// Remove ID field since keyed objects use the key as the identifier
-	delete(recordToStore, IDField)
+	delete(recordToStore, "id") // Remove potential ID field since keyed objects use the key as the identifier
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	originalResource, resourceExists := r.data[resourceName]
 
-	keyedObject, isMap := originalResource.(domain.Record)
-	// the resource already exists but it's not a map
-	if !isMap && resourceExists {
-		return nil, wasCreated, resource.ErrWrongResourceType
-	}
+	var keyedObject domain.Record
 
-	// resource did not exist, create it
-	if !resourceExists {
-		keyedObject = make(map[string]any)
+	if resourceExists {
+		var isMap bool
+		keyedObject, isMap = originalResource.(domain.Record)
+
+		// type assertion above fails so not a domain.Record (underlying map)
+		if !isMap {
+			return nil, wasCreated, resource.ErrWrongResourceType
+		}
+	} else {
+		// the resource does not exist so create a new domain.Record for it
+		keyedObject = make(domain.Record)
 	}
 
 	// we need this so that we return the correct wasCreated bool as it will determine returned http.StatusCode (201 vs 200) in the handler
 	_, keyExisted := keyedObject[recordKey]
 	wasCreated = !keyExisted
 
+	// create a copy of the existing keyed object for modification (leaving the original unmodified)
+	newKeyedObject := make(domain.Record, len(keyedObject)+1)
+	maps.Copy(newKeyedObject, keyedObject)
+
+	// normalise the new record
 	normalisedRecord := r.normaliseLoadedValue(map[string]any(recordToStore))
 
-	keyedObject[recordKey] = normalisedRecord
-	r.data[resourceName] = keyedObject
+	// add it to newKeyedObject we created
+	newKeyedObject[recordKey] = normalisedRecord
+	// modify the in-memory cache with the new/updated resource
+	r.data[resourceName] = newKeyedObject
 
 	if err := r.persist(); err != nil {
 		// revert changes if not possible to save to file
@@ -457,7 +465,13 @@ func (r *JsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 		return nil, wasCreated, err
 	}
 
-	return normalisedRecord.(domain.Record), wasCreated, nil
+	record, ok := normalisedRecord.(domain.Record)
+	if !ok {
+		// This shouldn't happen, but better safe than sorry
+		return nil, wasCreated, fmt.Errorf("internal error: failed to normalize record")
+	}
+
+	return record, wasCreated, nil
 }
 
 func (r *JsonRepository) DeleteRecordFromCollection(ctx context.Context, resourceName, recordID string) error {

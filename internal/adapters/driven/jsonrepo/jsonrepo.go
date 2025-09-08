@@ -4,13 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"maps"
 	"math"
 	"sort"
 
 	jsonv2 "encoding/json/v2"
 	"jsonserver/internal/core/domain"
 	"jsonserver/internal/core/service/resource"
+	"jsonserver/internal/pkg/copier"
 	"os"
 	"sync"
 )
@@ -305,10 +305,10 @@ func (r *JsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 		switch v := item.(type) {
 		// this can either be a map or a single entry
 		case domain.Record:
-			newRecord := make(domain.Record, len(v)+1)
-
-			// A shallow copy is a better choice otherwise we'd be modifying the v under a Rlock() -  as of 1.21, maps.Copy replaces the need for a loop
-			maps.Copy(newRecord, v)
+			newRecord, err := copier.DeepCopy(v)
+			if err != nil {
+				return nil, err
+			}
 
 			if _, hasID := newRecord.ID(); !hasID {
 				newRecord.SetID(recordID)
@@ -344,8 +344,10 @@ func (r *JsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 		return nil, fmt.Errorf("%w: records in a collection must have a valid ID", resource.ErrInvalidRecord)
 	}
 
-	recordToStore := make(domain.Record, len(recordData))
-	maps.Copy(recordToStore, recordData)
+	recordToStore, err := copier.DeepCopy(recordData)
+	if err != nil {
+		return nil, err
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -413,8 +415,10 @@ func (r *JsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 		return nil, wasCreated, fmt.Errorf("%w: %s", resource.ErrInvalidRecord, err.Error())
 	}
 
-	recordToStore := make(domain.Record, len(recordData))
-	maps.Copy(recordToStore, recordData)
+	recordToStore, err := copier.DeepCopy(recordData)
+	if err != nil {
+		return nil, wasCreated, err
+	}
 	delete(recordToStore, "id") // Remove potential ID field since keyed objects use the key as the identifier
 
 	r.mu.Lock()
@@ -442,8 +446,13 @@ func (r *JsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 	wasCreated = !keyExisted
 
 	// create a copy of the existing keyed object for modification (leaving the original unmodified)
-	newKeyedObject := make(domain.Record, len(keyedObject)+1)
-	maps.Copy(newKeyedObject, keyedObject)
+	// newKeyedObject := make(domain.Record, len(keyedObject)+1)
+	// maps.Copy(newKeyedObject, keyedObject)
+
+	newKeyedObject, err := copier.DeepCopy(keyedObject)
+	if err != nil {
+		return nil, wasCreated, err
+	}
 
 	// normalise the new record
 	normalisedRecord := r.normaliseLoadedValue(map[string]any(recordToStore))
@@ -541,8 +550,10 @@ func (r *JsonRepository) DeleteRecordByKey(ctx context.Context, resourceName, re
 		return resource.ErrRecordNotFound
 	}
 
-	newKeyedObject := make(domain.Record, len(keyedObject))
-	maps.Copy(newKeyedObject, keyedObject)
+	newKeyedObject, err := copier.DeepCopy(keyedObject)
+	if err != nil {
+		return err
+	}
 
 	delete(newKeyedObject, recordKey)
 
@@ -577,8 +588,10 @@ func (r *JsonRepository) UpdateRecordInCollection(ctx context.Context, resourceN
 		return nil, resource.ErrMismatchedID
 	}
 
-	recordToStore := make(domain.Record, len(recordData))
-	maps.Copy(recordToStore, recordData)
+	recordToStore, err := copier.DeepCopy(recordData)
+	if err != nil {
+		return nil, err
+	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -599,8 +612,10 @@ func (r *JsonRepository) UpdateRecordInCollection(ctx context.Context, resourceN
 		return nil, resource.ErrRecordNotFound
 	}
 
-	newCollection := make([]any, len(collection))
-	copy(newCollection, collection)
+	newCollection, err := copier.DeepCopy(collection)
+	if err != nil {
+		return nil, err
+	}
 
 	// Convert domain.Record to map[string]any before normalizing
 	newCollection[recordPos] = r.normaliseLoadedValue(map[string]any(recordToStore))

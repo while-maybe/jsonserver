@@ -771,3 +771,28 @@ func TestUpserRecordByKey_PersistFailure(t *testing.T) {
 
 	assert.ElementsMatch(t, stateBefore, stateAfter, "cache should have rolled back")
 }
+
+func TestDeleteRecordFromCollection_PersistFailure(t *testing.T) {
+
+	mockError := errors.New("disk is full") // some made up error here is fine for now
+	mockP := &mockPersister{ErrToReturn: mockError}
+
+	repo := createRepoWithMockPersister(t, testData, mockP)
+	ctx := context.Background()
+
+	resourceName := "buildings"
+	recordID := "5"
+
+	stateBefore, err := repo.GetAllRecords(ctx, resourceName)
+	require.NoError(t, err, "could not get initial state")
+	require.NotEmpty(t, stateBefore, "initial state should not be empty for this test")
+
+	err = repo.DeleteRecordFromCollection(ctx, resourceName, recordID)
+	require.Error(t, err) // opp should fail - persist error
+	assert.ErrorIs(t, err, mockError)
+
+	stateAfter, err := repo.GetAllRecords(ctx, resourceName)
+	require.NoError(t, err, "could not get final state")
+
+	assert.ElementsMatch(t, stateBefore, stateAfter, "cache should have rolled back")
+}

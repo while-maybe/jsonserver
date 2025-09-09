@@ -510,7 +510,10 @@ func (r *JsonRepository) DeleteRecordFromCollection(ctx context.Context, resourc
 		return resource.ErrRecordNotFound
 	}
 
-	newCollection := append(collection[:targetIndex], collection[targetIndex+1:]...)
+	newCollection := make([]any, 0, len(collection)-1)
+	newCollection = append(newCollection, collection[:targetIndex]...)
+	newCollection = append(newCollection, collection[targetIndex+1:]...)
+
 	r.data[resourceName] = newCollection
 
 	if err := r.persist(); err != nil {
@@ -520,7 +523,6 @@ func (r *JsonRepository) DeleteRecordFromCollection(ctx context.Context, resourc
 		log.Printf("Persistence failed, rolling back change for resource '%s': %v", resourceName, err)
 		return err
 	}
-
 	return nil
 }
 

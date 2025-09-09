@@ -693,7 +693,44 @@ func TestUpdateRecordInCollection(t *testing.T) {
 	}
 }
 
-// test persist below
+func TestListResources(t *testing.T) {
+	testCases := map[string]struct {
+		initialData string
+		wantList    []string
+		wantErr     bool // Using a bool for wantErr is simpler if you don't care about the specific error type
+	}{
+		"ok - with multiple resources": {
+			initialData: testData,
+			wantList:    []string{"students", "buildings", "secret_code"},
+			wantErr:     false,
+		},
+		"ok - with an empty database": {
+			initialData: `{}`,       // or ""
+			wantList:    []string{}, // Expect an empty slice, not nil
+			wantErr:     false,
+		},
+	}
+
+	for name, tc := range testCases {
+		t.Run(name, func(t *testing.T) {
+			repo, _ := setupTestEnvironment(t, tc.initialData)
+			ctx := context.Background()
+
+			result, err := repo.ListResources(ctx)
+
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+
+				assert.Len(t, result, len(tc.wantList))
+				assert.ElementsMatch(t, tc.wantList, result)
+			}
+		})
+	}
+}
+
+// test persist failures below
 
 type mockPersister struct {
 	ErrToReturn error
@@ -788,6 +825,57 @@ func TestDeleteRecordFromCollection_PersistFailure(t *testing.T) {
 	require.NotEmpty(t, stateBefore, "initial state should not be empty for this test")
 
 	err = repo.DeleteRecordFromCollection(ctx, resourceName, recordID)
+	require.Error(t, err) // opp should fail - persist error
+	assert.ErrorIs(t, err, mockError)
+
+	stateAfter, err := repo.GetAllRecords(ctx, resourceName)
+	require.NoError(t, err, "could not get final state")
+
+	assert.ElementsMatch(t, stateBefore, stateAfter, "cache should have rolled back")
+}
+
+func TestDeleteRecordByKey_PersistFailure(t *testing.T) {
+
+	mockError := errors.New("disk is full") // some made up error here is fine for now
+	mockP := &mockPersister{ErrToReturn: mockError}
+
+	repo := createRepoWithMockPersister(t, testData, mockP)
+	ctx := context.Background()
+
+	resourceName := "students"
+	recordID := "Amy"
+
+	stateBefore, err := repo.GetAllRecords(ctx, resourceName)
+	require.NoError(t, err, "could not get initial state")
+	require.NotEmpty(t, stateBefore, "initial state should not be empty for this test")
+
+	err = repo.DeleteRecordByKey(ctx, resourceName, recordID)
+	require.Error(t, err) // opp should fail - persist error
+	assert.ErrorIs(t, err, mockError)
+
+	stateAfter, err := repo.GetAllRecords(ctx, resourceName)
+	require.NoError(t, err, "could not get final state")
+
+	assert.ElementsMatch(t, stateBefore, stateAfter, "cache should have rolled back")
+}
+
+func TestUpdateRecordInCollection_PersistFailure(t *testing.T) {
+
+	mockError := errors.New("disk is full") // some made up error here is fine for now
+	mockP := &mockPersister{ErrToReturn: mockError}
+
+	repo := createRepoWithMockPersister(t, testData, mockP)
+	ctx := context.Background()
+
+	resourceName := "buildings"
+	recordID := "5"
+	recordToUpdate := domain.Record{"id": "5", "name": "space center", "floors": 2}
+
+	stateBefore, err := repo.GetAllRecords(ctx, resourceName)
+	require.NoError(t, err, "could not get initial state")
+	require.NotEmpty(t, stateBefore, "initial state should not be empty for this test")
+
+	_, err = repo.UpdateRecordInCollection(ctx, resourceName, recordID, recordToUpdate)
 	require.Error(t, err) // opp should fail - persist error
 	assert.ErrorIs(t, err, mockError)
 

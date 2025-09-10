@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"path"
+	"path/filepath"
 	"sort"
+	"strings"
 
 	jsonv2 "encoding/json/v2"
 	"jsonserver/internal/core/domain"
@@ -13,64 +16,170 @@ import (
 	"jsonserver/internal/pkg/copier"
 	"os"
 	"sync"
+
+	"github.com/fsnotify/fsnotify"
 )
 
 type JsonRepository struct {
 	p    Persister // Exported for testing
 	mu   sync.RWMutex
 	data map[string]any // in-memory cache
+
+	// watcher fields
+	dataDir string
+	watcher *fsnotify.Watcher
 }
 
 var _ resource.Repository = (*JsonRepository)(nil)
 
-func NewJsonRepository(filename string) (resource.Repository, error) {
-
-	return NewJsonRepositoryWithPersister(filename, NewFilePersister(filename))
-}
-
-// NewJsonRepositoryWithPersister is the constructor for testing or custom persistence. It is EXPORTED so the _test package can call it.
-func NewJsonRepositoryWithPersister(filename string, p Persister) (resource.Repository, error) {
+func NewJsonRepository(dataDir string) (*JsonRepository, error) {
 	repo := &JsonRepository{
-		p:    p,
-		data: make(map[string]any),
+		data:    make(map[string]any),
+		p:       NewFilePersister(dataDir),
+		dataDir: dataDir,
 	}
 
-	if err := repo.loadFromFile(filename); err != nil {
-		if os.IsNotExist(err) {
-			return repo, nil
-		}
-		// if error is anything else apart from file not existing
-		return nil, err
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create file watcher: %w", err)
 	}
+	repo.watcher = watcher
+
+	if err := repo.loadFromDir(); err != nil {
+		if os.IsNotExist(err) {
+
+			log.Printf("WARN: Data directory '%s' not found. Starting with an empty repository.", dataDir)
+
+			if err := os.MkdirAll(dataDir, 0755); err != nil {
+				return nil, fmt.Errorf("failed to create data directory '%s': %w", dataDir, err)
+			}
+
+		} else {
+			// Any other error during the initial load is a problem.
+			return nil, fmt.Errorf("failed to perform initial data load: %w", err)
+		}
+	}
+	log.Printf("Successfully loaded initial data from '%s'.", dataDir)
 
 	return repo, nil
 }
 
-func (r *JsonRepository) loadFromFile(filename string) error {
+// NewJsonRepositoryWithPersister is the constructor for testing or custom persistence. It is EXPORTED so the _test package can call it.
+func NewJsonRepositoryWithPersister(dataDir string, p Persister) (resource.Repository, error) {
+	repo := &JsonRepository{
+		p:       p,
+		dataDir: dataDir,
+		data:    make(map[string]any),
+	}
 
-	bytes, err := os.ReadFile(filename)
+	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
+		return nil, fmt.Errorf("failed to create file watcher: %w", err)
+	}
+
+	repo.watcher = watcher
+
+	if err := repo.loadFromDir(); err != nil {
 		if os.IsNotExist(err) {
-			return nil
+
+			log.Printf("WARN: Data directory '%s' not found. Starting with an empty repository.", dataDir)
+
+			if err := os.MkdirAll(dataDir, 0755); err != nil {
+				return nil, fmt.Errorf("failed to create data directory '%s': %w", dataDir, err)
+			}
+
+		} else {
+			// Any other error during the initial load is a problem.
+			return nil, fmt.Errorf("failed to perform initial data load: %w", err)
 		}
-		return err
+	}
+	log.Printf("Successfully loaded initial data from '%s'.", dataDir)
+
+	return repo, nil
+}
+
+func (r *JsonRepository) loadFromDir() error {
+	files, err := os.ReadDir(r.dataDir)
+	if err != nil {
+		return fmt.Errorf("failed to read data directory: %w", err)
 	}
 
-	// check for empty file
-	if len(bytes) == 0 {
-		return nil
+	newData := make(map[string]any)
+
+	for _, file := range files {
+		if file.IsDir() || filepath.Ext(file.Name()) != ".json" {
+			continue
+		}
+
+		resourceName := strings.TrimSuffix(file.Name(), ".json")
+		filePath := path.Join(r.dataDir, file.Name())
+
+		bytes, err := os.ReadFile(filePath)
+		// error reading from file
+		if err != nil {
+			log.Printf("WARN: failed to read resource file %s: %v", filePath, err)
+			continue
+		}
+		// check for empty file
+		if len(bytes) == 0 {
+			log.Printf("WARN: resource file %s is empty", filePath)
+			continue
+		}
+
+		var value any
+		if err := jsonv2.Unmarshal(bytes, &value); err != nil {
+			log.Printf("WARN: failed to unmarshal resource file %s: %v", filePath, err)
+			continue
+		}
+
+		// Normalize and store
+		newData[resourceName] = r.normaliseLoadedValue(value)
 	}
 
-	var temp map[string]any
-	if err := jsonv2.Unmarshal(bytes, &temp); err != nil {
-		return err
-	}
-
-	for resourceName, resourceValue := range temp {
-		r.data[resourceName] = r.normaliseLoadedValue(resourceValue)
-	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.data = newData
 
 	return nil
+}
+
+func (r *JsonRepository) Watch(ctx context.Context) {
+	go func() {
+		defer r.watcher.Close()
+		for {
+			select {
+			case <-ctx.Done():
+				log.Println("Stopping file watcher.")
+				return
+			case event, ok := <-r.watcher.Events:
+				if !ok {
+					return
+				}
+
+				// only to ops that change data
+				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) || event.Has(fsnotify.Remove) {
+					log.Printf("File changed detected: %s. Reloading all data.", event.Name)
+
+					if err := r.loadFromDir(); err != nil {
+						log.Printf("Error: failed to hot-reload data: %v", err)
+					}
+				}
+
+			case err, ok := <-r.watcher.Errors:
+				if !ok {
+					return
+				}
+				log.Printf("Error: file watcher error: %v", err)
+			}
+		}
+	}()
+
+	err := r.watcher.Add(r.dataDir)
+	if err != nil {
+		log.Fatalf("failed to start watching data directory: %v", err)
+	}
+
+	log.Printf("Watching for changes in data directory: %s", r.dataDir)
 }
 
 // persist writes the entire in-memory cache back to the JSON file

@@ -16,68 +16,61 @@ import (
 	"jsonserver/internal/pkg/copier"
 	"os"
 	"sync"
-
-	"github.com/fsnotify/fsnotify"
 )
 
 type JsonRepository struct {
-	p    Persister // Exported for testing
-	mu   sync.RWMutex
-	data map[string]any // in-memory cache
-
-	// watcher fields
+	p       Persister // Exported for testing
+	w       Watcher
+	mu      sync.RWMutex
+	data    map[string]any // in-memory cache
 	dataDir string
-	watcher *fsnotify.Watcher
 }
+
+type Option func(*JsonRepository) error
 
 var _ resource.Repository = (*JsonRepository)(nil)
 
-func NewJsonRepository(dataDir string) (*JsonRepository, error) {
-	repo := &JsonRepository{
-		data:    make(map[string]any),
-		p:       NewFilePersister(dataDir),
-		dataDir: dataDir,
+func WithPersister(p Persister) Option {
+	return func(r *JsonRepository) error {
+		r.p = p
+		return nil
 	}
-
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create file watcher: %w", err)
-	}
-	repo.watcher = watcher
-
-	if err := repo.loadFromDir(); err != nil {
-		if os.IsNotExist(err) {
-
-			log.Printf("WARN: Data directory '%s' not found. Starting with an empty repository.", dataDir)
-
-			if err := os.MkdirAll(dataDir, 0755); err != nil {
-				return nil, fmt.Errorf("failed to create data directory '%s': %w", dataDir, err)
-			}
-
-		} else {
-			// Any other error during the initial load is a problem.
-			return nil, fmt.Errorf("failed to perform initial data load: %w", err)
-		}
-	}
-	log.Printf("Successfully loaded initial data from '%s'.", dataDir)
-
-	return repo, nil
 }
 
-// NewJsonRepositoryWithPersister is the constructor for testing or custom persistence. It is EXPORTED so the _test package can call it.
-func NewJsonRepositoryWithPersister(dataDir string, p Persister) (*JsonRepository, error) {
+func WithWatcher(w Watcher) Option {
+	return func(r *JsonRepository) error {
+		r.w = w
+		return nil
+	}
+}
+
+func NewJsonRepository(dataDir string, opts ...Option) (*JsonRepository, error) {
 	repo := &JsonRepository{
-		p:       p,
-		dataDir: dataDir,
 		data:    make(map[string]any),
+		dataDir: dataDir,
 	}
 
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create file watcher: %w", err)
+	// apply provided options
+	for _, opt := range opts {
+
+		if err := opt(repo); err != nil {
+			return nil, err
+		}
 	}
 
-	repo.watcher = watcher
+	// set persister and watcher if these were not in opts - default options
+	if repo.p == nil {
+		repo.p = NewFilePersister(dataDir)
+	}
+
+	if repo.w == nil {
+		watcher, err := NewFsnotifyWatcher(dataDir, repo.loadFromDir)
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to create file watcher: %w", err)
+		}
+		repo.w = watcher
+	}
 
 	if err := repo.loadFromDir(); err != nil {
 		if os.IsNotExist(err) {
@@ -139,47 +132,14 @@ func (r *JsonRepository) loadFromDir() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.data = newData
+	log.Printf("Data reload complete. Loaded %d resources.", len(newData))
 
 	return nil
 }
 
 func (r *JsonRepository) Watch(ctx context.Context) {
-	go func() {
-		defer r.watcher.Close()
-		for {
-			select {
-			case <-ctx.Done():
-				log.Println("Stopping file watcher.")
-				return
-			case event, ok := <-r.watcher.Events:
-				if !ok {
-					return
-				}
-
-				// only to ops that change data
-				if event.Has(fsnotify.Write) || event.Has(fsnotify.Create) || event.Has(fsnotify.Rename) || event.Has(fsnotify.Remove) {
-					log.Printf("File changed detected: %s. Reloading all data.", event.Name)
-
-					if err := r.loadFromDir(); err != nil {
-						log.Printf("Error: failed to hot-reload data: %v", err)
-					}
-				}
-
-			case err, ok := <-r.watcher.Errors:
-				if !ok {
-					return
-				}
-				log.Printf("Error: file watcher error: %v", err)
-			}
-		}
-	}()
-
-	err := r.watcher.Add(r.dataDir)
-	if err != nil {
-		log.Fatalf("failed to start watching data directory: %v", err)
-	}
-
-	log.Printf("Watching for changes in data directory: %s", r.dataDir)
+	// after injecting the dependency we simply call the .Watch() method from the dependency in r
+	r.w.Watch(ctx)
 }
 
 // persist writes the entire in-memory cache back to the JSON file

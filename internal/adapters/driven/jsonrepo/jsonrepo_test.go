@@ -3,10 +3,10 @@ package jsonrepo_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"jsonserver/internal/adapters/driven/jsonrepo"
 	"jsonserver/internal/core/domain"
 	"jsonserver/internal/core/service/resource"
-	"log"
 	"maps"
 	"os"
 	"path/filepath"
@@ -14,6 +14,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"encoding/json/jsontext"
+	jsonv2 "encoding/json/v2"
 )
 
 const testData = `{
@@ -29,23 +32,85 @@ const testData = `{
 	"secret_code": 101
 }`
 
-func setupTestEnvironment(t *testing.T, initialData string) (resource.Repository, string) {
+const defaultFilePermissions = os.FileMode(0644)
+
+func setupTestEnvironment(t *testing.T, initialData string, p jsonrepo.Persister) (resource.Repository, string) {
 	t.Helper()
 
-	tempDir := t.TempDir()
-	dbFilename := filepath.Join(tempDir, "test_db.json")
+	dataDir := t.TempDir()
 
-	err := os.WriteFile(dbFilename, []byte(initialData), 0644)
-	if err != nil {
-		t.Fatalf("Failed to write initial test data: %v", err)
+	if initialData != "" {
+		var resources map[string]any
+		err := jsonv2.Unmarshal([]byte(initialData), &resources)
+		require.NoError(t, err, "failed to parse initialData JSON")
+
+		for resourceName, data := range resources {
+			// Create the filename, e.g., "students.json"
+			fileName := fmt.Sprintf("%s.json", resourceName)
+			filePath := filepath.Join(dataDir, fileName)
+
+			// Marshal just this resource's data back into JSON bytes.
+			opts := jsonv2.JoinOptions(jsontext.Multiline(true), jsontext.WithIndent("  "))
+			bytes, err := jsonv2.Marshal(data, opts)
+			require.NoError(t, err, "failed to marshal resource data for file")
+
+			// Write the file.
+			err = os.WriteFile(filePath, bytes, defaultFilePermissions)
+			require.NoError(t, err, "failed to write resource file")
+		}
 	}
 
-	repo, err := jsonrepo.NewJsonRepository(dbFilename)
-	if err != nil {
-		log.Fatalf("Failed to initialize repository: %v", err)
+	var repo resource.Repository
+	var err error
+
+	if p != nil {
+		repo, err = jsonrepo.NewJsonRepositoryWithPersister(dataDir, p)
+	} else {
+		repo, err = jsonrepo.NewJsonRepository(dataDir)
 	}
-	return repo, dbFilename
+	require.NoError(t, err, "failed to initialise repository in test setup")
+
+	return repo, dataDir
 }
+
+// func setupTestEnvironment(t *testing.T, initialData string) (resource.Repository, string) {
+// 	t.Helper()
+
+// 	tempDir := t.TempDir()
+
+// 	// create data sub folder
+// 	dataDir := filepath.Join(tempDir, "data")
+// 	err := os.MkdirAll(dataDir, 0755)
+// 	require.NoError(t, err, "failed to create temp data directory")
+
+// 	if initialData != "" {
+// 		var resources map[string]any
+// 		// Unmarshal the testData string into a map.
+// 		err = jsonv2.Unmarshal([]byte(initialData), &resources)
+// 		require.NoError(t, err, "failed to parse initialData JSON")
+
+// 		// 4. Iterate through the parsed resources and write each one to its own file.
+// 		for resourceName, data := range resources {
+// 			// Create the filename, e.g., "students.json"
+// 			fileName := fmt.Sprintf("%s.json", resourceName)
+// 			filePath := filepath.Join(dataDir, fileName)
+
+// 			// Marshal just this resource's data back into JSON bytes.
+// 			opts := jsonv2.JoinOptions(jsontext.Multiline(true), jsontext.WithIndent("  "))
+// 			bytes, err := jsonv2.Marshal(data, opts)
+// 			require.NoError(t, err, "failed to marshal resource data for file")
+
+// 			// Write the file.
+// 			err = os.WriteFile(filePath, bytes, 0644)
+// 			require.NoError(t, err, "failed to write resource file")
+// 		}
+// 	}
+
+// 	repo, err := jsonrepo.NewJsonRepository(dataDir)
+// 	require.NoError(t, err, "failed to initialize repository")
+
+// 	return repo, dataDir
+// }
 
 // verifyResourceState is a test helper that checks both the cache and the persisted file
 // to ensure the resource matches the expected state.
@@ -128,7 +193,7 @@ func TestGetAllRecords(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 
-			repo, _ := setupTestEnvironment(t, tc.initialData)
+			repo, _ := setupTestEnvironment(t, tc.initialData, nil)
 			ctx := context.Background()
 
 			recordsInCache, err := repo.GetAllRecords(ctx, tc.resourceName)
@@ -199,7 +264,7 @@ func TestGetRecordByID(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 
-			repo, _ := setupTestEnvironment(t, tc.initialData)
+			repo, _ := setupTestEnvironment(t, tc.initialData, nil)
 			ctx := context.Background()
 
 			record, err := repo.GetRecordByID(ctx, tc.resourceName, tc.recordID)
@@ -274,7 +339,7 @@ func TestCreateRecord(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 
-			repo, dbFilename := setupTestEnvironment(t, tc.initialData)
+			repo, dbFilename := setupTestEnvironment(t, tc.initialData, nil)
 			ctx := context.Background()
 
 			createdRecord, err := repo.CreateRecord(ctx, tc.resourceName, tc.recordToAdd)
@@ -377,7 +442,7 @@ func TestUpsertRecordByKey(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 
-			repo, dbFilename := setupTestEnvironment(t, tc.initialData)
+			repo, dbFilename := setupTestEnvironment(t, tc.initialData, nil)
 			ctx := context.Background()
 
 			createdRecord, isNewRecord, err := repo.UpsertRecordByKey(ctx, tc.resourceName, tc.recordKey, tc.recordToAdd)
@@ -475,7 +540,7 @@ func TestDeleteRecordFromCollection(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 
-			repo, dbFilename := setupTestEnvironment(t, tc.initialData)
+			repo, dbFilename := setupTestEnvironment(t, tc.initialData, nil)
 			ctx := context.Background()
 
 			err := repo.DeleteRecordFromCollection(ctx, tc.resourceName, tc.recordKeytoDelete)
@@ -559,7 +624,7 @@ func TestDeleteRecordByKey(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 
-			repo, dbFilename := setupTestEnvironment(t, tc.initialData)
+			repo, dbFilename := setupTestEnvironment(t, tc.initialData, nil)
 			ctx := context.Background()
 
 			err := repo.DeleteRecordByKey(ctx, tc.resourceName, tc.recordKeytoDelete)
@@ -668,7 +733,7 @@ func TestUpdateRecordInCollection(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 
-			repo, dbFilename := setupTestEnvironment(t, tc.initialData)
+			repo, dbFilename := setupTestEnvironment(t, tc.initialData, nil)
 			ctx := context.Background()
 
 			updatedRecord, err := repo.UpdateRecordInCollection(ctx, tc.resourceName, tc.recordID, tc.recordToUpdate)
@@ -713,7 +778,7 @@ func TestListResources(t *testing.T) {
 
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
-			repo, _ := setupTestEnvironment(t, tc.initialData)
+			repo, _ := setupTestEnvironment(t, tc.initialData, nil)
 			ctx := context.Background()
 
 			result, err := repo.ListResources(ctx)
@@ -740,29 +805,12 @@ func (m *mockPersister) Persist(data map[string]any) error {
 	return m.ErrToReturn
 }
 
-const defaultFilePermissions = os.FileMode(0644)
-
-func createRepoWithMockPersister(t *testing.T, initialData string, p jsonrepo.Persister) resource.Repository {
-	t.Helper()
-
-	tempDir := t.TempDir()
-	filename := filepath.Join(tempDir, "temp_db.json")
-
-	err := os.WriteFile(filename, []byte(initialData), defaultFilePermissions)
-	require.NoError(t, err)
-
-	repo, err := jsonrepo.NewJsonRepositoryWithPersister(filename, p)
-	require.NoError(t, err)
-
-	return repo
-}
-
 func TestCreateRecord_PersistFailure(t *testing.T) {
 
 	mockError := errors.New("disk is full") // some made up error here is fine for now
 	mockP := &mockPersister{ErrToReturn: mockError}
 
-	repo := createRepoWithMockPersister(t, testData, mockP)
+	repo, _ := setupTestEnvironment(t, testData, mockP)
 	ctx := context.Background()
 
 	resourceName := "buildings"
@@ -787,7 +835,7 @@ func TestUpserRecordByKey_PersistFailure(t *testing.T) {
 	mockError := errors.New("disk is full") // some made up error here is fine for now
 	mockP := &mockPersister{ErrToReturn: mockError}
 
-	repo := createRepoWithMockPersister(t, testData, mockP)
+	repo, _ := setupTestEnvironment(t, testData, mockP)
 	ctx := context.Background()
 
 	resourceName := "students"
@@ -814,7 +862,7 @@ func TestDeleteRecordFromCollection_PersistFailure(t *testing.T) {
 	mockError := errors.New("disk is full") // some made up error here is fine for now
 	mockP := &mockPersister{ErrToReturn: mockError}
 
-	repo := createRepoWithMockPersister(t, testData, mockP)
+	repo, _ := setupTestEnvironment(t, testData, mockP)
 	ctx := context.Background()
 
 	resourceName := "buildings"
@@ -839,7 +887,7 @@ func TestDeleteRecordByKey_PersistFailure(t *testing.T) {
 	mockError := errors.New("disk is full") // some made up error here is fine for now
 	mockP := &mockPersister{ErrToReturn: mockError}
 
-	repo := createRepoWithMockPersister(t, testData, mockP)
+	repo, _ := setupTestEnvironment(t, testData, mockP)
 	ctx := context.Background()
 
 	resourceName := "students"
@@ -864,7 +912,7 @@ func TestUpdateRecordInCollection_PersistFailure(t *testing.T) {
 	mockError := errors.New("disk is full") // some made up error here is fine for now
 	mockP := &mockPersister{ErrToReturn: mockError}
 
-	repo := createRepoWithMockPersister(t, testData, mockP)
+	repo, _ := setupTestEnvironment(t, testData, mockP)
 	ctx := context.Background()
 
 	resourceName := "buildings"

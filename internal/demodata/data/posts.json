@@ -1,0 +1,26 @@
+[
+  {
+    "id": "post-1",
+    "title": "Welcome to the Dynamic JSON API Server!",
+    "content": "This server is built with Go and demonstrates a clean, hexagonal architecture. It supports hot-reloading and transactional file persistence.",
+    "published": true,
+    "likes": 125,
+    "authorId": "user-1"
+  },
+  {
+    "id": "post-2",
+    "title": "Understanding RESTful APIs",
+    "content": "REST provides a set of architectural principles for designing networked applications. This API follows those principles for collections and keyed-objects.",
+    "published": true,
+    "likes": 256,
+    "authorId": "user-2"
+  },
+  {
+    "id": "post-3",
+    "title": "A Guide to Go's Concurrency",
+    "content": "Go's goroutines and channels make concurrent programming straightforward and efficient. This server uses mutexes for safe concurrent access.",
+    "published": false,
+    "likes": 42,
+    "authorId": "user-1"
+  }
+]

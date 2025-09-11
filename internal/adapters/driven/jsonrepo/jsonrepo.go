@@ -161,6 +161,9 @@ func initDataDir(dataDir string) error {
 			if err := writeDemoData(dataDir); err != nil {
 				return fmt.Errorf("failed to write demo data: %w", err)
 			}
+
+			// we created the demo data
+			return nil
 		}
 		// handle others like permission denied, etc
 		return fmt.Errorf("failed to check data folder: %w", err)
@@ -173,7 +176,7 @@ func initDataDir(dataDir string) error {
 // writeDemoData walks the embedded filesystem and writes each demo file to disk.
 func writeDemoData(destDir string) error {
 	// must match what we specified in embedFS
-	const sourceDir = "internal/_demo/data"
+	const sourceDir = "."
 
 	// I like to write a literal so the call to WalkDir is not long
 	walkFunc := func(path string, d fs.DirEntry, err error) error {

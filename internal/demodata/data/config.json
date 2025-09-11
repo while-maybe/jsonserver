@@ -1,0 +1,16 @@
+{
+  "siteName": "My Awesome API",
+  "theme": "dark",
+  "maintenanceMode": false,
+  "apiSettings": {
+    "version": "v1.2.0",
+    "rateLimit": {
+      "enabled": true,
+      "requestsPerMinute": 100
+    }
+  },
+  "featureFlags": {
+    "enableNewDashboard": true,
+    "enableBetaFeatures": false
+  }
+}

@@ -1,0 +1,16 @@
+[
+  {
+    "id": "user-1",
+    "username": "alice",
+    "fullName": "Alice Anderson",
+    "role": "admin",
+    "memberSince": "2023-01-15T10:00:00Z"
+  },
+  {
+    "id": "user-2",
+    "username": "bob",
+    "fullName": "Bob Bannon",
+    "role": "editor",
+    "memberSince": "2023-03-22T14:30:00Z"
+  }
+]

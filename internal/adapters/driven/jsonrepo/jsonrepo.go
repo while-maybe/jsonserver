@@ -65,7 +65,7 @@ func NewJsonRepository(dataDir string) (*JsonRepository, error) {
 }
 
 // NewJsonRepositoryWithPersister is the constructor for testing or custom persistence. It is EXPORTED so the _test package can call it.
-func NewJsonRepositoryWithPersister(dataDir string, p Persister) (resource.Repository, error) {
+func NewJsonRepositoryWithPersister(dataDir string, p Persister) (*JsonRepository, error) {
 	repo := &JsonRepository{
 		p:       p,
 		dataDir: dataDir,

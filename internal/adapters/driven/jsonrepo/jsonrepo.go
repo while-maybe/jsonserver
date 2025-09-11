@@ -3,6 +3,7 @@ package jsonrepo
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log"
 	"math"
 	"path"
@@ -13,6 +14,7 @@ import (
 	jsonv2 "encoding/json/v2"
 	"jsonserver/internal/core/domain"
 	"jsonserver/internal/core/service/resource"
+	"jsonserver/internal/demodata"
 	"jsonserver/internal/pkg/copier"
 	"os"
 	"sync"
@@ -27,6 +29,8 @@ type JsonRepository struct {
 }
 
 type Option func(*JsonRepository) error
+
+const defaultDirPermissions = os.FileMode(0755)
 
 var _ resource.Repository = (*JsonRepository)(nil)
 
@@ -48,6 +52,10 @@ func NewJsonRepository(dataDir string, opts ...Option) (*JsonRepository, error) 
 	repo := &JsonRepository{
 		data:    make(map[string]any),
 		dataDir: dataDir,
+	}
+
+	if err := initDataDir(dataDir); err != nil {
+		return nil, fmt.Errorf("failed to initialize data directory: %w", err)
 	}
 
 	// apply provided options
@@ -135,6 +143,64 @@ func (r *JsonRepository) loadFromDir() error {
 	log.Printf("Data reload complete. Loaded %d resources.", len(newData))
 
 	return nil
+}
+
+// initDataDir is an unexported helper that ensures the data folder exists. If the folder does not exist, it creates it and populates it with embedded demo data.
+func initDataDir(dataDir string) error {
+	_, err := os.Stat(dataDir)
+
+	if err != nil {
+
+		if os.IsNotExist(err) {
+			log.Printf("INFO: Data folder '%s' not found. Creating it with demo data.", dataDir)
+
+			if err := os.MkdirAll(dataDir, defaultDirPermissions); err != nil {
+				return fmt.Errorf("failed to create data folder: %w", err)
+			}
+
+			if err := writeDemoData(dataDir); err != nil {
+				return fmt.Errorf("failed to write demo data: %w", err)
+			}
+		}
+		// handle others like permission denied, etc
+		return fmt.Errorf("failed to check data folder: %w", err)
+	}
+
+	// folder exists
+	return nil
+}
+
+// writeDemoData walks the embedded filesystem and writes each demo file to disk.
+func writeDemoData(destDir string) error {
+	// must match what we specified in embedFS
+	const sourceDir = "internal/_demo/data"
+
+	// I like to write a literal so the call to WalkDir is not long
+	walkFunc := func(path string, d fs.DirEntry, err error) error {
+		// if an error has been passed
+		if err != nil {
+			return err
+		}
+
+		// here we skip folders
+		if d.Type().IsDir() {
+			return nil
+		}
+
+		// otherwise attempt to read from embed...
+		bytes, err := demodata.DemoDataFS.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("failed to read embedded file %s: %w", path, err)
+		}
+
+		destPath := filepath.Join(destDir, filepath.Base(path))
+
+		// ...and write to disk - in the dest path
+		return os.WriteFile(destPath, bytes, defaultFilePermissions)
+	}
+
+	// single line call to WalkDir thanks to walkFunc
+	return fs.WalkDir(demodata.DemoDataFS, sourceDir, walkFunc)
 }
 
 func (r *JsonRepository) Watch(ctx context.Context) {

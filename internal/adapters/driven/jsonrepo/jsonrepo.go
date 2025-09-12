@@ -165,7 +165,7 @@ func initDataDir(dataDir string) error {
 			// we created the demo data
 			return nil
 		}
-		// handle others like permission denied, etc
+		// handle other errors like permission denied, etc
 		return fmt.Errorf("failed to check data folder: %w", err)
 	}
 

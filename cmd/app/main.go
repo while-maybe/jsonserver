@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"jsonserver/internal/adapters/driven/jsonrepo"
 	"jsonserver/internal/adapters/driving/httpadapter"
 	"jsonserver/internal/config"
@@ -31,8 +32,30 @@ func main() {
 		log.Fatalf("Failed to create repository: %v", err)
 	}
 
-	log.Printf("Repository initialized successfully.")
+	// create the context
+	appCtx, cancel := context.WithCancel(context.Background())
 
+	// TODO - failsafe cleanup? Unsure
+	defer cancel()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM) // listen to OS interrupt signal
+
+	// clean shutdown sequence
+	go func() {
+		<-quit
+		log.Println("Shutdown signal received...")
+		cancel()
+	}()
+
+	if err := run(appCtx, cfg, repo); err != nil {
+		log.Fatalf("FATAL: Application run failed: %v", err)
+	}
+
+	log.Println("Server exiting gracefully...")
+}
+
+func run(appCtx context.Context, cfg *config.Config, repo resource.Repository) error {
 	// service and handler
 	resourceSvc := resource.NewService(repo)
 	apiHandler := httpadapter.NewHandler(resourceSvc)
@@ -45,40 +68,32 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 	}
 
-	// create the context
-	appCtx, cancel := context.WithCancel(context.Background())
-	// failsafe cleanup
-	defer cancel()
-
-	// start the file watcher
-	repo.Watch(appCtx)
+	jr, ok := repo.(*jsonrepo.JsonRepository)
+	if ok {
+		log.Printf("INFO: File-based repository detected, starting watcher.")
+		jr.Watch(appCtx)
+	}
 
 	// start the server
 	go func() {
 		log.Printf("Server starting on %s", cfg.ServerAddr)
-		if err := server.ListenAndServe(); err != nil {
-			log.Fatalf("Failed to start server: %v", err)
+
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("ERROR: Server listen error: %v", err)
 		}
 	}()
 
-	log.Printf("Server is ready to handle requests at %s", cfg.ServerAddr)
+	// listen for context cancellation
+	<-appCtx.Done()
+	log.Println("Context cancelled, initiating server shutdown.")
 
-	// clean shutdown sequence
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM) // listen to OS interrupt signal
-
-	<-quit
-	log.Println("Shutdown signal received...")
-
-	cancel()
-	log.Println("Signaling background processes to stop...")
-
+	// graceful shutdown
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("FATAL: Server forced to shutdown: %v", err)
+		return fmt.Errorf("FATAL: Server forced to shutdown: %v", err)
 	}
 
-	log.Println("Server exiting gracefully...")
+	return nil
 }

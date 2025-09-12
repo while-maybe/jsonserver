@@ -22,6 +22,10 @@ type FilePersister struct {
 	dataDir string
 }
 
+type noOpPersister struct{}
+
+func (p *noOpPersister) Persist(data map[string]any) error { return nil }
+
 func NewFilePersister(dataDir string) *FilePersister {
 	return &FilePersister{dataDir: dataDir}
 }

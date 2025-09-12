@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
-	"math"
 	"path"
 	"path/filepath"
 	"sort"
@@ -21,11 +20,12 @@ import (
 )
 
 type JsonRepository struct {
-	p       Persister // Exported for testing
-	w       Watcher
-	mu      sync.RWMutex
-	data    map[string]any // in-memory cache
-	dataDir string
+	p          Persister // Exported for testing
+	w          Watcher
+	mu         sync.RWMutex
+	data       map[string]any // in-memory cache
+	dataDir    string
+	normaliser *dataNormaliser
 }
 
 type Option func(*JsonRepository) error
@@ -50,8 +50,9 @@ func WithWatcher(w Watcher) Option {
 
 func NewJsonRepository(dataDir string, opts ...Option) (*JsonRepository, error) {
 	repo := &JsonRepository{
-		data:    make(map[string]any),
-		dataDir: dataDir,
+		data:       make(map[string]any),
+		dataDir:    dataDir,
+		normaliser: &dataNormaliser{},
 	}
 
 	if err := initDataDir(dataDir); err != nil {
@@ -99,6 +100,24 @@ func NewJsonRepository(dataDir string, opts ...Option) (*JsonRepository, error) 
 	return repo, nil
 }
 
+// NewRepositoryFromData creates a new repository initialized with a pre-existing map of data. It uses an in-memory-only persister and no-op watcher.
+func NewJsonRepositoryFromData(initialData map[string]any) resource.Repository {
+	normalisedData := make(map[string]any)
+	normaliser := &dataNormaliser{}
+
+	for k, v := range initialData {
+		normalisedData[k] = normaliser.normalise(v)
+	}
+
+	repo := &JsonRepository{
+		p:    &noOpPersister{},
+		w:    &noOpWatcher{},
+		data: normalisedData,
+	}
+
+	return repo
+}
+
 func (r *JsonRepository) loadFromDir() error {
 	files, err := os.ReadDir(r.dataDir)
 	if err != nil {
@@ -134,7 +153,7 @@ func (r *JsonRepository) loadFromDir() error {
 		}
 
 		// Normalize and store
-		newData[resourceName] = r.normaliseLoadedValue(value)
+		newData[resourceName] = r.normaliser.normalise(value)
 	}
 
 	r.mu.Lock()
@@ -215,68 +234,10 @@ func (r *JsonRepository) Watch(ctx context.Context) {
 func (r *JsonRepository) persist() error {
 	denormalisedData := make(map[string]any)
 	for resourceName, resourceValue := range r.data {
-		denormalisedData[resourceName] = r.denormaliseForPersist(resourceValue)
+		denormalisedData[resourceName] = r.normaliser.denormalise(resourceValue)
 	}
 
 	return r.p.Persist(denormalisedData)
-}
-
-// transformSliceItems takes a collection and applies a transformer function to each item returning a same length collection - think .map() in JS
-func (r *JsonRepository) transformSliceItems(slice []any, transformer func(any) any) []any {
-	result := make([]any, len(slice))
-
-	for i, item := range slice {
-		result[i] = transformer(item)
-	}
-
-	return result
-}
-
-func (j *JsonRepository) transformMapItems(m map[string]any, transformer func(any) any) domain.Record {
-	normalisedMap := make(map[string]any, len(m))
-
-	for key, value := range m {
-		normalisedMap[key] = transformer(value)
-	}
-
-	// this conversion is safe as domain.Record IS a map[string]any
-	return domain.Record(normalisedMap)
-}
-
-func (r *JsonRepository) normaliseLoadedValue(value any) any {
-	switch v := value.(type) {
-	case float64:
-		// if the number has no fractional part, convert and return to int
-		if v == math.Trunc(v) {
-			return int(v)
-		}
-		// otherwise keep the float
-		return v
-
-	case []any:
-		return r.transformSliceItems(v, r.normaliseLoadedValue)
-
-	case map[string]any:
-		return r.transformMapItems(v, r.normaliseLoadedValue)
-
-	default:
-		// Keep keyed objects and singular values as-is
-		return v
-	}
-}
-
-func (r *JsonRepository) denormaliseForPersist(value any) any {
-	switch v := value.(type) {
-	case domain.Record:
-		return r.transformMapItems(v, r.denormaliseForPersist)
-
-	case []any:
-		return r.transformSliceItems(v, r.denormaliseForPersist)
-
-	default:
-		// Keep keyed objects and singular values as-is
-		return v
-	}
 }
 
 func (r *JsonRepository) getResourceType(data any) resource.ResourceType {
@@ -493,7 +454,7 @@ func (r *JsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 	data, hasData := r.data[resourceName]
 
 	if !hasData {
-		normalisedRecord := r.normaliseLoadedValue(map[string]any(recordToStore))
+		normalisedRecord := r.normaliser.normalise(map[string]any(recordToStore))
 		r.data[resourceName] = []any{normalisedRecord}
 
 		if err := r.persist(); err != nil {
@@ -520,7 +481,7 @@ func (r *JsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 		}
 	}
 
-	normalisedRecord := r.normaliseLoadedValue(map[string]any(recordToStore))
+	normalisedRecord := r.normaliser.normalise(map[string]any(recordToStore))
 	newCollection := append(collection, normalisedRecord)
 
 	r.data[resourceName] = newCollection
@@ -593,7 +554,7 @@ func (r *JsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 	}
 
 	// normalise the new record
-	normalisedRecord := r.normaliseLoadedValue(map[string]any(recordToStore))
+	normalisedRecord := r.normaliser.normalise(map[string]any(recordToStore))
 
 	// add it to newKeyedObject we created
 	newKeyedObject[recordKey] = normalisedRecord
@@ -758,7 +719,7 @@ func (r *JsonRepository) UpdateRecordInCollection(ctx context.Context, resourceN
 	}
 
 	// Convert domain.Record to map[string]any before normalizing
-	newCollection[recordPos] = r.normaliseLoadedValue(map[string]any(recordToStore))
+	newCollection[recordPos] = r.normaliser.normalise(map[string]any(recordToStore))
 
 	r.data[resourceName] = newCollection
 

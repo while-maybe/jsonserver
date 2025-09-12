@@ -14,26 +14,58 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	jsonv2 "encoding/json/v2"
 )
 
 func main() {
-
 	fmt.Println(assets.BannerString)
-
 	log.Printf("Starting json server...")
 
-	// load the config
-	cfg, err := config.Load()
-	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
-	}
+	var cfg *config.Config
+	var repo resource.Repository
+	var err error
 
-	log.Printf("Configuration loaded: Server Address=%s, Data Directory=%s", cfg.ServerAddr, cfg.DataDir)
+	stat, _ := os.Stdin.Stat()
+	if (stat.Mode() & os.ModeCharDevice) == 0 {
+		log.Println("INFO: Data detected on stdin. Running in pipe mode.")
 
-	// create the repo
-	repo, err := jsonrepo.NewJsonRepository(cfg.DataDir)
-	if err != nil {
-		log.Fatalf("Failed to create repository: %v", err)
+		cfg = config.Default()
+
+		// bytes, err := io.ReadAll(os.Stdin)
+		// if err != nil {
+		// 	log.Fatalf("FATAL: Failed to read from stdin: %v", err)
+		// }
+
+		// var pipedData map[string]any
+		// if err := jsonv2.Unmarshal(bytes, &pipedData); err != nil {
+		// 	log.Fatalf("FATAL: Failed to parse JSON from stdin: %v", err)
+		// }
+
+		var pipedData map[string]any
+		if err := jsonv2.UnmarshalRead(os.Stdin, &pipedData); err != nil {
+			log.Fatalf("FATAL: Failed to parse JSON from stdin: %v", err)
+		}
+
+		// create an in-memory repo (only)
+		repo = jsonrepo.NewJsonRepositoryFromData(pipedData)
+
+	} else {
+		log.Println("INFO: No data on stdin. Running in default server mode.")
+
+		// load the config
+		cfg, err = config.Load()
+		if err != nil {
+			log.Fatalf("Failed to load configuration: %v", err)
+		}
+
+		log.Printf("Configuration loaded: Server Address=%s, Data Directory=%s", cfg.ServerAddr, cfg.DataDir)
+
+		// create the repo
+		repo, err = jsonrepo.NewJsonRepository(cfg.DataDir)
+		if err != nil {
+			log.Fatalf("Failed to create repository: %v", err)
+		}
 	}
 
 	// create the context

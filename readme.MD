@@ -1,7 +1,7 @@
 # Go Dynamic JSON API Server
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/your-username/your-repo)](https://goreportcard.com/report/github.com/your-username/your-repo)
-[![Build Status](https://github.com/your-username/your-repo/actions/workflows/go.yml/badge.svg)](https://github.com/your-username/your-repo/actions)
+[![Go Report Card](https://goreportcard.com/badge/github.com/while-maybe/json-server)](https://goreportcard.com/report/github.com/while-maybe/json-server)
+[![Build Status](https://github.com/while-maybe/json-server/actions/workflows/go.yml/badge.svg)](https://github.com/while-maybe/json-server/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A high-fidelity mock API server written in idiomatic Go. It dynamically serves a complete RESTful API from a directory of JSON files, featuring live hot-reloading, transactional persistence, and a professional-grade concurrent architecture.

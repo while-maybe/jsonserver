@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"jsonserver/internal/adapters/driven/jsonrepo"
 	"jsonserver/internal/adapters/driving/httpadapter"
+	"jsonserver/internal/assets"
 	"jsonserver/internal/config"
 	"jsonserver/internal/core/service/resource"
 	"log"
@@ -16,6 +17,9 @@ import (
 )
 
 func main() {
+
+	fmt.Println(assets.BannerString)
+
 	log.Printf("Starting json server...")
 
 	// load the config

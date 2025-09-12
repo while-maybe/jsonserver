@@ -85,7 +85,7 @@ func NewJsonRepository(dataDir string, opts ...Option) (*JsonRepository, error) 
 
 			log.Printf("WARN: Data directory '%s' not found. Starting with an empty repository.", dataDir)
 
-			if err := os.MkdirAll(dataDir, 0755); err != nil {
+			if err := os.MkdirAll(dataDir, defaultDirPermissions); err != nil {
 				return nil, fmt.Errorf("failed to create data directory '%s': %w", dataDir, err)
 			}
 

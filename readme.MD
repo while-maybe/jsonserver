@@ -66,7 +66,7 @@ There are two ways to run the application.
 Simply run the application. On the first run, it will automatically create the `data` directory with sample files if it doesn't exist.
 ```bash
 go mod tidy
-go run ./cmd/server/main.go
+GOEXPERIMENT=jsonv2 go run ./cmd/server/main.go
 ```
 The server will start on `http://localhost:8080` and begin watching the `data` directory.
 
@@ -85,7 +85,7 @@ cat db.json | GOEXPERIMENT=jsonv2 go run ./cmd/server/main.go
 **Windows (PowerShell) Example:**
 ```powershell
 # Serve the contents of a single db.json file
-Get-Content db.json |  GOEXPERIMENT=jsonv2 go run ./cmd/server/main.go
+Get-Content db.json | GOEXPERIMENT=jsonv2 go run ./cmd/server/main.go
 ```
 
 ---

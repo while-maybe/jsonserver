@@ -8,15 +8,25 @@ import (
 	"strings"
 )
 
+// OpMode is a custom type to represent the application's operating mode - read from configured folder or stdin
+type OpMode int
+
 type Config struct {
 	ServerAddr string
 	DataDir    string
+	OpMode     OpMode
 }
+
+const (
+	ModeServer OpMode = iota
+	ModePipe
+)
 
 // change here only as it populates both default and env aware configs
 var cfgDefaults = map[string]string{
 	"SERVER_ADDR": ":8080",
 	"DATA_DIR":    "data",
+	//"OP_MODE" should not be here as the mode is set at run time
 }
 
 // Default return a configuration object with defaults so can bypass .env file or ENV vars

@@ -22,50 +22,28 @@ func main() {
 	fmt.Println(assets.BannerString)
 	log.Printf("Starting json server...")
 
-	var cfg *config.Config
+	// detect the operating mode at runtime
+	cfg, pipedData := bootstrap()
+
 	var repo resource.Repository
-	var err error
-
-	stat, _ := os.Stdin.Stat()
-	if (stat.Mode() & os.ModeCharDevice) == 0 {
-		log.Println("INFO: Data detected on stdin. Running in pipe mode.")
-
-		cfg = config.Default()
-
-		// bytes, err := io.ReadAll(os.Stdin)
-		// if err != nil {
-		// 	log.Fatalf("FATAL: Failed to read from stdin: %v", err)
-		// }
-
-		// var pipedData map[string]any
-		// if err := jsonv2.Unmarshal(bytes, &pipedData); err != nil {
-		// 	log.Fatalf("FATAL: Failed to parse JSON from stdin: %v", err)
-		// }
-
-		var pipedData map[string]any
-		if err := jsonv2.UnmarshalRead(os.Stdin, &pipedData); err != nil {
-			log.Fatalf("FATAL: Failed to parse JSON from stdin: %v", err)
-		}
-
+	switch cfg.OpMode {
+	case config.ModePipe:
 		// create an in-memory repo (only)
+		log.Println("INFO: Initializing repository from stdin data.")
 		repo = jsonrepo.NewJsonRepositoryFromData(pipedData)
 
-	} else {
-		log.Println("INFO: No data on stdin. Running in default server mode.")
+	case config.ModeServer:
+		log.Println("INFO: Initializing file-based repository.")
 
-		// load the config
-		cfg, err = config.Load()
-		if err != nil {
-			log.Fatalf("Failed to load configuration: %v", err)
-		}
-
-		log.Printf("Configuration loaded: Server Address=%s, Data Directory=%s", cfg.ServerAddr, cfg.DataDir)
-
-		// create the repo
+		var err error
 		repo, err = jsonrepo.NewJsonRepository(cfg.DataDir)
 		if err != nil {
 			log.Fatalf("Failed to create repository: %v", err)
 		}
+
+	default:
+		log.Fatal("FATAL: Server can't run in unknown mode")
+		// shouldn't be here
 	}
 
 	// create the context
@@ -74,6 +52,17 @@ func main() {
 	// TODO - failsafe cleanup? Unsure
 	defer cancel()
 
+	setupSignalHandler(cancel)
+
+	if err := run(appCtx, cfg, repo); err != nil {
+		log.Fatalf("FATAL: Application run failed: %v", err)
+	}
+
+	log.Println("Server exiting gracefully...")
+}
+
+// setupSignalHandler configures a listener for OS signals to trigger a graceful shutdown.
+func setupSignalHandler(cancelFunc context.CancelFunc) {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM) // listen to OS interrupt signal
 
@@ -81,14 +70,41 @@ func main() {
 	go func() {
 		<-quit
 		log.Println("Shutdown signal received...")
-		cancel()
+		cancelFunc()
 	}()
+}
 
-	if err := run(appCtx, cfg, repo); err != nil {
-		log.Fatalf("FATAL: Application run failed: %v", err)
+// bootstrap determines the operating mode and returns the appropriate config and any piped data.
+func bootstrap() (*config.Config, map[string]any) {
+	stat, _ := os.Stdin.Stat()
+
+	if (stat.Mode() & os.ModeCharDevice) == 0 {
+		log.Println("INFO: Data detected on stdin. Running in pipe mode.")
+
+		cfg := config.Default()
+		cfg.OpMode = config.ModePipe
+
+		var pipedData map[string]any
+		if err := jsonv2.UnmarshalRead(os.Stdin, &pipedData); err != nil {
+			log.Fatalf("FATAL: Failed to parse JSON from stdin: %v", err)
+		}
+
+		return cfg, pipedData
 	}
 
-	log.Println("Server exiting gracefully...")
+	log.Println("INFO: No data on stdin. Running in default server mode.")
+
+	// load the config
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	log.Printf("Configuration loaded: Server Address=%s, Data Directory=%s", cfg.ServerAddr, cfg.DataDir)
+
+	cfg.OpMode = config.ModeServer
+
+	return cfg, nil
 }
 
 func run(appCtx context.Context, cfg *config.Config, repo resource.Repository) error {

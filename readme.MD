@@ -1,8 +1,10 @@
 # Go Dynamic JSON API Server
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/while-maybe/json-server)](https://goreportcard.com/report/github.com/while-maybe/json-server)
+[![Go Version](https://img.shields.io/badge/Go-1.25-00ADD8.svg?style=flat-square)](https://go.dev/)
+[![Architect](https://img.shields.io/badge/Architecture-Hexagonal-8B008B.svg?style=flat-square)]()
+<!-- [![Go Report Card](https://goreportcard.com/badge/github.com/while-maybe/json-server)](https://goreportcard.com/report/github.com/while-maybe/json-server)
 [![Build Status](https://github.com/while-maybe/json-server/actions/workflows/go.yml/badge.svg)](https://github.com/while-maybe/json-server/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) -->
 
 A high-fidelity mock API server written in idiomatic Go. It dynamically serves a complete RESTful API from a directory of JSON files, featuring live hot-reloading, transactional persistence, and a professional-grade concurrent architecture.
 
@@ -29,7 +31,7 @@ This server is built upon several core principles to ensure it is both powerful 
 
 ### Prerequisites
 
-*   Go `1.22` or later.
+*   Go `1.25` or later.
 *   Git
 
 ### 1. Installation
@@ -77,13 +79,13 @@ The server can instantly serve any JSON data piped to it. This is incredibly use
 **Linux / macOS Example:**
 ```bash
 # Serve the contents of a single db.json file
-cat db.json | go run ./cmd/server/main.go
+cat db.json | GOEXPERIMENT=jsonv2 go run ./cmd/server/main.go
 ```
 
 **Windows (PowerShell) Example:**
 ```powershell
 # Serve the contents of a single db.json file
-Get-Content db.json | go run ./cmd/server/main.go
+Get-Content db.json |  GOEXPERIMENT=jsonv2 go run ./cmd/server/main.go
 ```
 
 ---
@@ -190,7 +192,7 @@ A comprehensive unit test suite provides an ironclad guarantee of the repository
 
 To run all tests:
 ```bash
-go test ./...
+GOEXPERIMENT=jsonv2 go test ./...
 ```
 The tests are located in the `_test` package for each component and use table-driven tests, `testify` for assertions, and mock objects to simulate failure conditions.
 

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 
 	jsonv2 "encoding/json/v2"
 	"jsonserver/internal/core/domain"
@@ -20,12 +21,13 @@ import (
 )
 
 type JsonRepository struct {
-	p          Persister // Exported for testing
-	w          Watcher
-	mu         sync.RWMutex
-	data       map[string]any // in-memory cache
-	dataDir    string
-	normaliser *dataNormaliser
+	p            Persister // Exported for testing
+	w            Watcher
+	mu           sync.RWMutex
+	data         map[string]any // in-memory cache
+	dataDir      string
+	normaliser   *dataNormaliser
+	isPersisting atomic.Bool
 }
 
 type Option func(*JsonRepository) error
@@ -72,8 +74,12 @@ func NewJsonRepository(dataDir string, opts ...Option) (*JsonRepository, error) 
 		repo.p = NewFilePersister(dataDir)
 	}
 
+	isInternalChangeCheck := func() bool {
+		return repo.isPersisting.Load()
+	}
+
 	if repo.w == nil {
-		watcher, err := NewFsnotifyWatcher(dataDir, repo.loadFromDir)
+		watcher, err := NewFsnotifyWatcher(dataDir, repo.loadFromDir, isInternalChangeCheck)
 
 		if err != nil {
 			return nil, fmt.Errorf("failed to create file watcher: %w", err)
@@ -232,6 +238,9 @@ func (r *JsonRepository) Watch(ctx context.Context) {
 
 // persist writes the entire in-memory cache back to the JSON file
 func (r *JsonRepository) persist() error {
+	r.isPersisting.Store(true)
+	defer r.isPersisting.Store(false)
+
 	denormalisedData := make(map[string]any)
 	for resourceName, resourceValue := range r.data {
 		denormalisedData[resourceName] = r.normaliser.denormalise(resourceValue)

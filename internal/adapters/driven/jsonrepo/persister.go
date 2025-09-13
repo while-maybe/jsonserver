@@ -31,6 +31,7 @@ func NewFilePersister(dataDir string) *FilePersister {
 }
 
 func (fp *FilePersister) Persist(data map[string]any) error {
+
 	keysInCache := make(map[string]bool)
 
 	// figure the keys that should actually exist as individual json data files

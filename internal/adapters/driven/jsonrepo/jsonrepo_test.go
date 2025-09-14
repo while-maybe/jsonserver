@@ -758,7 +758,11 @@ type mockPersister struct {
 	ErrToReturn error
 }
 
-func (m *mockPersister) Persist(data map[string]any) error {
+// implement the interface
+func (m *mockPersister) PersistOne(resourceName string, resourceData any) error {
+	return m.ErrToReturn
+}
+func (m *mockPersister) Cleanup(activeResources map[string]bool) error {
 	return m.ErrToReturn
 }
 

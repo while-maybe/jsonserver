@@ -28,6 +28,7 @@ type JsonRepository struct {
 	dataDir      string
 	normaliser   *dataNormaliser
 	isPersisting atomic.Bool
+	dirty        map[string]bool // a set of resources that have changed since last load from file
 }
 
 type Option func(*JsonRepository) error
@@ -55,6 +56,7 @@ func NewJsonRepository(dataDir string, opts ...Option) (*JsonRepository, error) 
 		data:       make(map[string]any),
 		dataDir:    dataDir,
 		normaliser: &dataNormaliser{},
+		dirty:      make(map[string]bool),
 	}
 
 	if err := initDataDir(dataDir); err != nil {
@@ -116,9 +118,11 @@ func NewJsonRepositoryFromData(initialData map[string]any) resource.Repository {
 	}
 
 	repo := &JsonRepository{
-		p:    &noOpPersister{},
-		w:    &noOpWatcher{},
-		data: normalisedData,
+		p:          NewNoOpPersister(),
+		w:          NewNoOpWatcher(),
+		data:       normalisedData,
+		normaliser: normaliser,
+		dirty:      make(map[string]bool),
 	}
 
 	return repo
@@ -238,15 +242,40 @@ func (r *JsonRepository) Watch(ctx context.Context) {
 
 // persist writes the entire in-memory cache back to the JSON file
 func (r *JsonRepository) persist() error {
+	if len(r.dirty) == 0 {
+		return nil
+	}
+
 	r.isPersisting.Store(true)
 	defer r.isPersisting.Store(false)
 
-	denormalisedData := make(map[string]any)
-	for resourceName, resourceValue := range r.data {
-		denormalisedData[resourceName] = r.normaliser.denormalise(resourceValue)
+	for resourceName := range r.dirty {
+		resourceData, ok := r.data[resourceName]
+
+		// the resource was deleted so we don't need it
+		if !ok {
+			continue
+		}
+
+		denormalisedData := r.normaliser.denormalise(resourceData)
+		if err := r.p.PersistOne(resourceName, denormalisedData); err != nil {
+			return err
+		}
 	}
 
-	return r.p.Persist(denormalisedData)
+	// after all writes we can clean up
+	activeResources := make(map[string]bool)
+	for name := range r.data {
+		activeResources[name] = true
+	}
+
+	if err := r.p.Cleanup(activeResources); err != nil {
+		log.Printf("WARN: an error occurred during persistence cleanup: %v", err)
+	}
+
+	// clean the dirty flags
+	r.dirty = make(map[string]bool)
+	return nil
 }
 
 func (r *JsonRepository) getResourceType(data any) resource.ResourceType {
@@ -465,11 +494,13 @@ func (r *JsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 	if !hasData {
 		normalisedRecord := r.normaliser.normalise(map[string]any(recordToStore))
 		r.data[resourceName] = []any{normalisedRecord}
+		r.dirty[resourceName] = true
 
 		if err := r.persist(); err != nil {
 
 			// revert the change if saving to file fails
 			delete(r.data, resourceName)
+			delete(r.dirty, resourceName)
 			return nil, err
 		}
 		return normalisedRecord.(domain.Record), nil
@@ -494,10 +525,12 @@ func (r *JsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 	newCollection := append(collection, normalisedRecord)
 
 	r.data[resourceName] = newCollection
+	r.dirty[resourceName] = true
 
 	if err := r.persist(); err != nil {
 		// revert changes if not possible to save to file
 		r.data[resourceName] = collection
+		delete(r.dirty, resourceName)
 
 		log.Printf("Persistence failed, rolling back change for resource '%s': %v", resourceName, err)
 		return nil, err
@@ -563,12 +596,17 @@ func (r *JsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 	}
 
 	// normalise the new record
-	normalisedRecord := r.normaliser.normalise(map[string]any(recordToStore))
+	normalisedRecord, ok := r.normaliser.normalise(map[string]any(recordToStore)).(domain.Record)
+	if !ok {
+		// This shouldn't happen, but better safe than sorry
+		return nil, wasCreated, fmt.Errorf("internal error: failed to normalize record")
+	}
 
 	// add it to newKeyedObject we created
 	newKeyedObject[recordKey] = normalisedRecord
 	// modify the in-memory cache with the new/updated resource
 	r.data[resourceName] = newKeyedObject
+	r.dirty[resourceName] = true
 
 	if err := r.persist(); err != nil {
 		// revert changes if not possible to save to file
@@ -578,17 +616,14 @@ func (r *JsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 			r.data[resourceName] = originalResource
 		}
 
+		// if persistence failed, clear the dirty flag on the resource
+		delete(r.dirty, resourceName)
+
 		log.Printf("Persistence failed, rolling back change for resource '%s': %v", resourceName, err)
 		return nil, wasCreated, err
 	}
 
-	record, ok := normalisedRecord.(domain.Record)
-	if !ok {
-		// This shouldn't happen, but better safe than sorry
-		return nil, wasCreated, fmt.Errorf("internal error: failed to normalize record")
-	}
-
-	return record, wasCreated, nil
+	return normalisedRecord, wasCreated, nil
 }
 
 func (r *JsonRepository) DeleteRecordFromCollection(ctx context.Context, resourceName, recordID string) error {
@@ -623,10 +658,12 @@ func (r *JsonRepository) DeleteRecordFromCollection(ctx context.Context, resourc
 	newCollection = append(newCollection, collection[targetIndex+1:]...)
 
 	r.data[resourceName] = newCollection
+	r.dirty[resourceName] = true
 
 	if err := r.persist(); err != nil {
 
 		r.data[resourceName] = collection
+		delete(r.dirty, resourceName)
 
 		log.Printf("Persistence failed, rolling back change for resource '%s': %v", resourceName, err)
 		return err
@@ -668,10 +705,12 @@ func (r *JsonRepository) DeleteRecordByKey(ctx context.Context, resourceName, re
 	delete(newKeyedObject, recordKey)
 
 	r.data[resourceName] = newKeyedObject
+	r.dirty[resourceName] = true
 
 	if err := r.persist(); err != nil {
 		// revert changes if not possible to save to file
 		r.data[resourceName] = originalResource
+		delete(r.dirty, resourceName)
 
 		log.Printf("Failed to persist deletion of key '%s' from '%s', rolling back: %v", recordKey, resourceName, err)
 		return err
@@ -731,10 +770,12 @@ func (r *JsonRepository) UpdateRecordInCollection(ctx context.Context, resourceN
 	newCollection[recordPos] = r.normaliser.normalise(map[string]any(recordToStore))
 
 	r.data[resourceName] = newCollection
+	r.dirty[resourceName] = true
 
 	if err := r.persist(); err != nil {
 		// revert changes if not possible to save to file
 		r.data[resourceName] = collection
+		delete(r.dirty, resourceName)
 
 		log.Printf("Persistence failed, rolling back change for resource '%s': %v", resourceName, err)
 		return nil, err

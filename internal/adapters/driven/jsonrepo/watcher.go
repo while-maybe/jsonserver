@@ -27,6 +27,10 @@ type fsnotifyWatcher struct {
 
 type noOpWatcher struct{}
 
+func NewNoOpWatcher() *noOpWatcher {
+	return &noOpWatcher{}
+}
+
 func (w *noOpWatcher) Watch(ctx context.Context) {}
 
 // NewFsnotifyWatcher creates a new file watcher. It takes a data directory to watch and a reload function to call on events.

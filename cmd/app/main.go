@@ -29,11 +29,11 @@ func main() {
 	switch cfg.OpMode {
 	case config.ModePipe:
 		// create an in-memory repo (only)
-		log.Println("INFO: Initializing repository from stdin data.")
+		log.Println("INFO: Initialising repository from stdin data.")
 		repo = jsonrepo.NewJsonRepositoryFromData(pipedData)
 
 	case config.ModeServer:
-		log.Println("INFO: Initializing file-based repository.")
+		log.Println("INFO: Initialising file-based repository.")
 
 		var err error
 		repo, err = jsonrepo.NewJsonRepository(cfg.DataDir)

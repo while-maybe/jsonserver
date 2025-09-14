@@ -58,7 +58,7 @@ func NewJsonRepository(dataDir string, opts ...Option) (*JsonRepository, error) 
 	}
 
 	if err := initDataDir(dataDir); err != nil {
-		return nil, fmt.Errorf("failed to initialize data directory: %w", err)
+		return nil, fmt.Errorf("failed to initialise data directory: %w", err)
 	}
 
 	// apply provided options
@@ -106,7 +106,7 @@ func NewJsonRepository(dataDir string, opts ...Option) (*JsonRepository, error) 
 	return repo, nil
 }
 
-// NewRepositoryFromData creates a new repository initialized with a pre-existing map of data. It uses an in-memory-only persister and no-op watcher.
+// NewRepositoryFromData creates a new repository initialised with a pre-existing map of data. It uses an in-memory-only persister and no-op watcher.
 func NewJsonRepositoryFromData(initialData map[string]any) resource.Repository {
 	normalisedData := make(map[string]any)
 	normaliser := &dataNormaliser{}

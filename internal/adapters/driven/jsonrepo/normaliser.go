@@ -8,6 +8,10 @@ import (
 // dataNormaliser is an unexported struct responsible for transforming data between its raw form (from JSON) and its canonical in-memory form
 type dataNormaliser struct{}
 
+func NewDataNormaliser() *dataNormaliser {
+	return &dataNormaliser{}
+}
+
 func (n *dataNormaliser) normalise(value any) any {
 	switch v := value.(type) {
 	case float64:

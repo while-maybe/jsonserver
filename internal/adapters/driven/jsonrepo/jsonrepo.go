@@ -28,7 +28,7 @@ type JsonRepository struct {
 	dataDir      string
 	normaliser   *dataNormaliser
 	isPersisting atomic.Bool
-	dirty        map[string]bool // a set of resources that have changed since last load from file
+	dirty        map[string]bool // resources that have changed since last load from file
 }
 
 type Option func(*JsonRepository) error
@@ -55,7 +55,7 @@ func NewJsonRepository(dataDir string, opts ...Option) (*JsonRepository, error) 
 	repo := &JsonRepository{
 		data:       make(map[string]any),
 		dataDir:    dataDir,
-		normaliser: &dataNormaliser{},
+		normaliser: NewDataNormaliser(),
 		dirty:      make(map[string]bool),
 	}
 
@@ -111,7 +111,7 @@ func NewJsonRepository(dataDir string, opts ...Option) (*JsonRepository, error) 
 // NewRepositoryFromData creates a new repository initialised with a pre-existing map of data. It uses an in-memory-only persister and no-op watcher.
 func NewJsonRepositoryFromData(initialData map[string]any) resource.Repository {
 	normalisedData := make(map[string]any)
-	normaliser := &dataNormaliser{}
+	normaliser := NewDataNormaliser()
 
 	for k, v := range initialData {
 		normalisedData[k] = normaliser.normalise(v)
@@ -240,7 +240,7 @@ func (r *JsonRepository) Watch(ctx context.Context) {
 	r.w.Watch(ctx)
 }
 
-// persist writes the entire in-memory cache back to the JSON file
+// persist writes the in-memory dirty resourceNames to the corresponding json file equivalent
 func (r *JsonRepository) persist() error {
 	if len(r.dirty) == 0 {
 		return nil

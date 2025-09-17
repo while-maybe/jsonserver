@@ -5,13 +5,17 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"maps"
 	"path"
 	"path/filepath"
 	"sort"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	jsonv2 "encoding/json/v2"
+
+	"jsonserver/internal/config"
 	"jsonserver/internal/core/domain"
 	"jsonserver/internal/core/service/resource"
 	"jsonserver/internal/demodata"
@@ -29,6 +33,10 @@ type JsonRepository struct {
 	normaliser   *dataNormaliser
 	isPersisting atomic.Bool
 	dirty        map[string]bool // resources that have changed since last load from file
+	// persistence fields
+	mode       config.PersistenceMode
+	writeQueue chan struct{} // signals there is something waiting to be written
+	shutdown   chan struct{} // signals background processes to stop
 }
 
 type Option func(*JsonRepository) error
@@ -51,17 +59,21 @@ func WithWatcher(w Watcher) Option {
 	}
 }
 
-func NewJsonRepository(dataDir string, opts ...Option) (*JsonRepository, error) {
+func NewJsonRepository(cfg *config.Config, opts ...Option) (*JsonRepository, error) {
 	repo := &JsonRepository{
 		data:       make(map[string]any),
-		dataDir:    dataDir,
+		dataDir:    cfg.DataDir,
 		normaliser: NewDataNormaliser(),
 		dirty:      make(map[string]bool),
+		// set the persistence mode from the config
+		mode:       cfg.PersistenceMode,
+		writeQueue: make(chan struct{}, 1),
+		shutdown:   make(chan struct{}),
 	}
 
-	if err := initDataDir(dataDir); err != nil {
-		return nil, fmt.Errorf("failed to initialise data directory: %w", err)
-	}
+	// if err := initDataDir(repo.dataDir); err != nil {
+	// 	return nil, fmt.Errorf("failed to initialise data directory: %w", err)
+	// }
 
 	// apply provided options
 	for _, opt := range opts {
@@ -73,15 +85,16 @@ func NewJsonRepository(dataDir string, opts ...Option) (*JsonRepository, error) 
 
 	// set persister and watcher if these were not in opts - default options
 	if repo.p == nil {
-		repo.p = NewFilePersister(dataDir)
-	}
-
-	isInternalChangeCheck := func() bool {
-		return repo.isPersisting.Load()
+		repo.p = NewFilePersister(repo.dataDir)
 	}
 
 	if repo.w == nil {
-		watcher, err := NewFsnotifyWatcher(dataDir, repo.loadFromDir, isInternalChangeCheck)
+
+		isInternalChangeCheck := func() bool {
+			return repo.isPersisting.Load()
+		}
+
+		watcher, err := NewFsnotifyWatcher(repo.dataDir, repo.loadFromDir, isInternalChangeCheck)
 
 		if err != nil {
 			return nil, fmt.Errorf("failed to create file watcher: %w", err)
@@ -89,23 +102,84 @@ func NewJsonRepository(dataDir string, opts ...Option) (*JsonRepository, error) 
 		repo.w = watcher
 	}
 
-	if err := repo.loadFromDir(); err != nil {
-		if os.IsNotExist(err) {
-
-			log.Printf("WARN: Data directory '%s' not found. Starting with an empty repository.", dataDir)
-
-			if err := os.MkdirAll(dataDir, defaultDirPermissions); err != nil {
-				return nil, fmt.Errorf("failed to create data directory '%s': %w", dataDir, err)
-			}
-
-		} else {
-			// Any other error during the initial load is a problem.
-			return nil, fmt.Errorf("failed to perform initial data load: %w", err)
-		}
+	if err := repo.initialise(); err != nil {
+		return nil, fmt.Errorf("failed to initialise data directory: %w", err)
 	}
-	log.Printf("Successfully loaded initial data from '%s'.", dataDir)
+
+	if repo.mode == config.ModeBatched {
+		go repo.batchPersistWorker(5 * time.Second) //TODO this needs to be configurable from .env
+	}
+
+	// if err := repo.loadFromDir(); err != nil {
+	// 	if os.IsNotExist(err) {
+
+	// 		log.Printf("WARN: Data directory '%s' not found. Starting with an empty repository.", repo.dataDir)
+
+	// 		if err := os.MkdirAll(repo.dataDir, defaultDirPermissions); err != nil {
+	// 			return nil, fmt.Errorf("failed to create data directory '%s': %w", repo.dataDir, err)
+	// 		}
+
+	// 	} else {
+	// 		// Any other error during the initial load is a problem.
+	// 		return nil, fmt.Errorf("failed to perform initial data load: %w", err)
+	// 	}
+	// }
+	log.Printf("Successfully loaded initial data from '%s'.", repo.dataDir)
 
 	return repo, nil
+}
+
+// initialize handles the entire startup process: ensuring the directory exists, populating it with demo data if needed, and performing the initial load.
+func (r *JsonRepository) initialise() error {
+	info, err := os.Stat(r.dataDir)
+
+	if err != nil {
+
+		if os.IsNotExist(err) {
+			log.Printf("INFO: Data folder '%s' not found. Creating it with demo data.", r.dataDir)
+
+			if err := os.MkdirAll(r.dataDir, defaultDirPermissions); err != nil {
+				return fmt.Errorf("failed to create data folder: %w", err)
+			}
+
+			if err := writeDemoData(r.dataDir); err != nil {
+				return fmt.Errorf("failed to write demo data: %w", err)
+			}
+
+			// we created the demo data
+			return nil
+		}
+		// handle other errors like permission denied, etc
+		return fmt.Errorf("failed to check data folder: %w", err)
+
+	} else if !info.IsDir() {
+		return fmt.Errorf("data path '%s' exists but is a file, not a directory", r.dataDir)
+	}
+
+	// folder exists
+	return r.loadFromDir()
+}
+
+func (r *JsonRepository) batchPersistWorker(saveInterval time.Duration) {
+	ticker := time.NewTicker(saveInterval)
+	defer ticker.Stop()
+
+	log.Printf("INFO: Batch persistence worker started. Will persist every %s.", saveInterval)
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := r.persist(); err != nil {
+				log.Printf("ERROR: Background batched persistence failed: %v", err)
+			}
+		case <-r.shutdown:
+			log.Println("INFO: Shutdown signal received, performing final flush.")
+			if err := r.persist(); err != nil {
+				log.Printf("ERROR: Final flush on shutdown failed: %v", err)
+			}
+			return
+		}
+	}
 }
 
 // NewRepositoryFromData creates a new repository initialised with a pre-existing map of data. It uses an in-memory-only persister and no-op watcher.
@@ -174,33 +248,34 @@ func (r *JsonRepository) loadFromDir() error {
 	return nil
 }
 
+// we placed this functionality inside initialise above
 // initDataDir is an unexported helper that ensures the data folder exists. If the folder does not exist, it creates it and populates it with embedded demo data.
-func initDataDir(dataDir string) error {
-	_, err := os.Stat(dataDir)
+// func initDataDir(dataDir string) error {
+// 	_, err := os.Stat(dataDir)
 
-	if err != nil {
+// 	if err != nil {
 
-		if os.IsNotExist(err) {
-			log.Printf("INFO: Data folder '%s' not found. Creating it with demo data.", dataDir)
+// 		if os.IsNotExist(err) {
+// 			log.Printf("INFO: Data folder '%s' not found. Creating it with demo data.", dataDir)
 
-			if err := os.MkdirAll(dataDir, defaultDirPermissions); err != nil {
-				return fmt.Errorf("failed to create data folder: %w", err)
-			}
+// 			if err := os.MkdirAll(dataDir, defaultDirPermissions); err != nil {
+// 				return fmt.Errorf("failed to create data folder: %w", err)
+// 			}
 
-			if err := writeDemoData(dataDir); err != nil {
-				return fmt.Errorf("failed to write demo data: %w", err)
-			}
+// 			if err := writeDemoData(dataDir); err != nil {
+// 				return fmt.Errorf("failed to write demo data: %w", err)
+// 			}
 
-			// we created the demo data
-			return nil
-		}
-		// handle other errors like permission denied, etc
-		return fmt.Errorf("failed to check data folder: %w", err)
-	}
+// 			// we created the demo data
+// 			return nil
+// 		}
+// 		// handle other errors like permission denied, etc
+// 		return fmt.Errorf("failed to check data folder: %w", err)
+// 	}
 
-	// folder exists
-	return nil
-}
+// 	// folder exists
+// 	return nil
+// }
 
 // writeDemoData walks the embedded filesystem and writes each demo file to disk.
 func writeDemoData(destDir string) error {
@@ -249,32 +324,64 @@ func (r *JsonRepository) persist() error {
 	r.isPersisting.Store(true)
 	defer r.isPersisting.Store(false)
 
-	for resourceName := range r.dirty {
-		resourceData, ok := r.data[resourceName]
+	r.mu.RLock()
 
-		// the resource was deleted so we don't need it
+	// capture dirty resources
+	dirtyToPersist := make(map[string]bool, len(r.dirty))
+	maps.Copy(dirtyToPersist, r.dirty)
+
+	// capture data for dirty resources while we have the lock
+	dataSnapshot := make(map[string]interface{}, len(dirtyToPersist))
+	for resourceName := range dirtyToPersist {
+		if resourceData, ok := r.data[resourceName]; ok {
+			dataSnapshot[resourceName] = resourceData
+		}
+	}
+
+	// capture resources for cleanup
+	activeResources := make(map[string]bool, len(r.data))
+	for name := range r.data {
+		activeResources[name] = true
+	}
+	r.mu.RUnlock()
+
+	log.Printf("Persisting %d dirty resources...", len(dirtyToPersist))
+
+	// track which resources were successfully persisted
+	persistedResources := make(map[string]bool)
+
+	// persist the dirty resources
+	for resourceName := range dirtyToPersist {
+		resourceData, ok := dataSnapshot[resourceName]
+
+		// the resource was deleted so we don't need it but should still be marked for cleanup
 		if !ok {
+			persistedResources[resourceName] = true
 			continue
 		}
 
 		denormalisedData := r.normaliser.denormalise(resourceData)
 		if err := r.p.PersistOne(resourceName, denormalisedData); err != nil {
-			return err
+			log.Printf("ERROR: failed to persist resource %s: %v", resourceName, err)
+			return fmt.Errorf("failed to persist resource %s: %w", resourceName, err)
 		}
+
+		persistedResources[resourceName] = true
 	}
 
 	// after all writes we can clean up
-	activeResources := make(map[string]bool)
-	for name := range r.data {
-		activeResources[name] = true
-	}
-
 	if err := r.p.Cleanup(activeResources); err != nil {
 		log.Printf("WARN: an error occurred during persistence cleanup: %v", err)
 	}
 
-	// clean the dirty flags
-	r.dirty = make(map[string]bool)
+	// clean only the dirty flags we wrote
+	r.mu.Lock()
+	for resourceName := range dirtyToPersist {
+		delete(r.dirty, resourceName)
+	}
+	r.mu.Unlock()
+
+	log.Printf("Successfully persisted %d resources", len(persistedResources))
 	return nil
 }
 
@@ -467,6 +574,27 @@ func (r *JsonRepository) GetRecordByID(ctx context.Context, resourceName, record
 	}
 }
 
+// handleWrite is the central method for managing persistence after an in-memory write operation.
+func (r *JsonRepository) handleWrite() error {
+	switch r.mode {
+
+	case config.ModeImmediateSync:
+		return r.persist()
+
+	case config.ModeImmediateAsync:
+		go func() {
+			if err := r.persist(); err != nil {
+				log.Printf("ERROR: Async persistence failed: %v", err)
+			}
+		}()
+
+	case config.ModeBatched:
+		// the background worker will do this
+	}
+
+	return nil
+}
+
 func (r *JsonRepository) CreateRecord(ctx context.Context, resourceName string, recordData domain.Record) (domain.Record, error) {
 	if err := r.validateResourceName(resourceName); err != nil {
 		return nil, err
@@ -485,57 +613,72 @@ func (r *JsonRepository) CreateRecord(ctx context.Context, resourceName string, 
 	if err != nil {
 		return nil, err
 	}
+	normalisedRecord, ok := r.normaliser.normalise(map[string]any(recordToStore)).(domain.Record)
+	if !ok {
+		return nil, fmt.Errorf("could not normalise recordData")
+	}
+
+	var rollbackFunc func()
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
-	data, hasData := r.data[resourceName]
+	originalData, hasData := r.data[resourceName]
 
 	if !hasData {
-		normalisedRecord := r.normaliser.normalise(map[string]any(recordToStore))
+		// new resource
 		r.data[resourceName] = []any{normalisedRecord}
 		r.dirty[resourceName] = true
 
-		if err := r.persist(); err != nil {
-
-			// revert the change if saving to file fails
+		rollbackFunc = func() {
 			delete(r.data, resourceName)
 			delete(r.dirty, resourceName)
-			return nil, err
 		}
-		return normalisedRecord.(domain.Record), nil
-	}
+	} else {
+		// existing resource
+		collection, err := r.asCollection(originalData)
+		if err != nil {
+			return nil, resource.ErrWrongResourceType
+		}
 
-	collection, err := r.asCollection(data)
-	if err != nil {
-		return nil, resource.ErrWrongResourceType
-	}
+		// check for duplicate IDs
+		for _, item := range collection {
 
-	for _, item := range collection {
+			if existingRecord, ok := item.(domain.Record); ok {
 
-		if existingRecord, ok := item.(domain.Record); ok {
-
-			if existingID, hasExistingID := existingRecord.ID(); hasExistingID && existingID == newID {
-				return nil, resource.ErrDuplicateID
+				if existingID, hasExistingID := existingRecord.ID(); hasExistingID && existingID == newID {
+					return nil, resource.ErrDuplicateID
+				}
 			}
 		}
+
+		// this is safer than append(collection, normalisedRecord)
+		newCollection := make([]any, 0, len(collection)+1)
+		newCollection = append(newCollection, collection...)
+		newCollection = append(newCollection, normalisedRecord)
+
+		r.data[resourceName] = newCollection
+		r.dirty[resourceName] = true
+
+		rollbackFunc = func() {
+			r.data[resourceName] = originalData
+			delete(r.dirty, resourceName)
+		}
 	}
 
-	normalisedRecord := r.normaliser.normalise(map[string]any(recordToStore))
-	newCollection := append(collection, normalisedRecord)
+	r.mu.Unlock()
 
-	r.data[resourceName] = newCollection
-	r.dirty[resourceName] = true
+	// writing outside the lock
+	if err := r.handleWrite(); err != nil {
+		log.Printf("Persistence failed, rolling back CreateRecord for resource '%s'", resourceName)
 
-	if err := r.persist(); err != nil {
-		// revert changes if not possible to save to file
-		r.data[resourceName] = collection
-		delete(r.dirty, resourceName)
+		r.mu.Lock()
+		rollbackFunc()
+		r.mu.Unlock()
 
-		log.Printf("Persistence failed, rolling back change for resource '%s': %v", resourceName, err)
 		return nil, err
 	}
-	return normalisedRecord.(domain.Record), nil
+
+	return normalisedRecord, nil
 }
 
 // UpsertRecordByKey creates a new record or updates an existing one within a keyed-object resource, returning  the stored record, a boolean that is true if a new record was created (false if updated), and an error if the operation fails, such as when targeting a resource that is a collection.
@@ -560,10 +703,19 @@ func (r *JsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 	if err != nil {
 		return nil, wasCreated, err
 	}
+
 	delete(recordToStore, "id") // Remove potential ID field since keyed objects use the key as the identifier
 
+	// normalise the new record
+	normalisedRecord, ok := r.normaliser.normalise(map[string]any(recordToStore)).(domain.Record)
+	if !ok {
+		// This shouldn't happen, but better safe than sorry
+		return nil, wasCreated, fmt.Errorf("internal error: failed to normalize record")
+	}
+
+	var rollbackFunc func()
+
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	originalResource, resourceExists := r.data[resourceName]
 
@@ -575,49 +727,48 @@ func (r *JsonRepository) UpsertRecordByKey(ctx context.Context, resourceName, re
 
 		// type assertion above fails so not a domain.Record (underlying map)
 		if !isMap {
+			r.mu.Unlock()
 			return nil, wasCreated, resource.ErrWrongResourceType
+		}
+
+		rollbackFunc = func() {
+			r.data[resourceName] = originalResource
+			delete(r.dirty, resourceName)
 		}
 	} else {
 		// the resource does not exist so create a new domain.Record for it
 		keyedObject = make(domain.Record)
+
+		rollbackFunc = func() {
+			delete(r.data, resourceName)
+			delete(r.dirty, resourceName)
+		}
 	}
 
 	// we need this so that we return the correct wasCreated bool as it will determine returned http.StatusCode (201 vs 200) in the handler
 	_, keyExisted := keyedObject[recordKey]
 	wasCreated = !keyExisted
 
-	// create a copy of the existing keyed object for modification (leaving the original unmodified)
-	// newKeyedObject := make(domain.Record, len(keyedObject)+1)
-	// maps.Copy(newKeyedObject, keyedObject)
-
 	newKeyedObject, err := copier.DeepCopy(keyedObject)
 	if err != nil {
+		r.mu.Unlock()
 		return nil, wasCreated, err
-	}
-
-	// normalise the new record
-	normalisedRecord, ok := r.normaliser.normalise(map[string]any(recordToStore)).(domain.Record)
-	if !ok {
-		// This shouldn't happen, but better safe than sorry
-		return nil, wasCreated, fmt.Errorf("internal error: failed to normalize record")
 	}
 
 	// add it to newKeyedObject we created
 	newKeyedObject[recordKey] = normalisedRecord
+
 	// modify the in-memory cache with the new/updated resource
 	r.data[resourceName] = newKeyedObject
 	r.dirty[resourceName] = true
 
-	if err := r.persist(); err != nil {
-		// revert changes if not possible to save to file
-		if !resourceExists {
-			delete(r.data, resourceName)
-		} else {
-			r.data[resourceName] = originalResource
-		}
+	r.mu.Unlock()
 
-		// if persistence failed, clear the dirty flag on the resource
-		delete(r.dirty, resourceName)
+	if err := r.handleWrite(); err != nil {
+		// revert changes if not possible to save to file
+		r.mu.Lock()
+		rollbackFunc()
+		r.mu.Unlock()
 
 		log.Printf("Persistence failed, rolling back change for resource '%s': %v", resourceName, err)
 		return nil, wasCreated, err
@@ -636,20 +787,22 @@ func (r *JsonRepository) DeleteRecordFromCollection(ctx context.Context, resourc
 	}
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	data, ok := r.data[resourceName]
 	if !ok {
+		r.mu.Unlock() // needed in case of early return
 		return resource.ErrResourceNotFound
 	}
 
 	collection, err := r.asCollection(data)
 	if err != nil {
+		r.mu.Unlock() // needed in case of early return
 		return err
 	}
 
 	_, targetIndex := r.findRecordByID(collection, recordID)
 	if targetIndex == -1 {
+		r.mu.Unlock() // needed in case of early return
 		return resource.ErrRecordNotFound
 	}
 
@@ -660,10 +813,16 @@ func (r *JsonRepository) DeleteRecordFromCollection(ctx context.Context, resourc
 	r.data[resourceName] = newCollection
 	r.dirty[resourceName] = true
 
-	if err := r.persist(); err != nil {
+	r.mu.Unlock()
+
+	if err := r.handleWrite(); err != nil {
+
+		r.mu.Lock()
 
 		r.data[resourceName] = collection
 		delete(r.dirty, resourceName)
+
+		r.mu.Unlock()
 
 		log.Printf("Persistence failed, rolling back change for resource '%s': %v", resourceName, err)
 		return err
@@ -681,24 +840,27 @@ func (r *JsonRepository) DeleteRecordByKey(ctx context.Context, resourceName, re
 	}
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	originalResource, ok := r.data[resourceName]
 	if !ok {
+		r.mu.Unlock()
 		return resource.ErrResourceNotFound
 	}
 
 	keyedObject, err := r.asKeyedObject(originalResource)
 	if err != nil {
+		r.mu.Unlock()
 		return err
 	}
 
 	if _, keyExists := keyedObject[recordKey]; !keyExists {
+		r.mu.Unlock()
 		return resource.ErrRecordNotFound
 	}
 
 	newKeyedObject, err := copier.DeepCopy(keyedObject)
 	if err != nil {
+		r.mu.Unlock()
 		return err
 	}
 
@@ -707,10 +869,14 @@ func (r *JsonRepository) DeleteRecordByKey(ctx context.Context, resourceName, re
 	r.data[resourceName] = newKeyedObject
 	r.dirty[resourceName] = true
 
-	if err := r.persist(); err != nil {
+	r.mu.Unlock()
+
+	if err := r.handleWrite(); err != nil {
 		// revert changes if not possible to save to file
+		r.mu.Lock()
 		r.data[resourceName] = originalResource
 		delete(r.dirty, resourceName)
+		r.mu.Unlock()
 
 		log.Printf("Failed to persist deletion of key '%s' from '%s', rolling back: %v", recordKey, resourceName, err)
 		return err
@@ -742,45 +908,69 @@ func (r *JsonRepository) UpdateRecordInCollection(ctx context.Context, resourceN
 		return nil, err
 	}
 
+	normalisedRecord := r.normaliser.normalise(map[string]any(recordToStore))
+
 	r.mu.Lock()
-	defer r.mu.Unlock()
 
 	data, hasData := r.data[resourceName]
 
 	if !hasData {
+		r.mu.Unlock()
 		return nil, resource.ErrResourceNotFound
 	}
 
 	collection, err := r.asCollection(data)
 	if err != nil {
+		r.mu.Unlock()
 		return nil, err
 	}
 
 	_, recordPos := r.findRecordByID(collection, recordID)
 	if recordPos == -1 {
+		r.mu.Unlock()
 		return nil, resource.ErrRecordNotFound
 	}
 
 	newCollection, err := copier.DeepCopy(collection)
 	if err != nil {
+		r.mu.Unlock()
 		return nil, err
 	}
 
-	// Convert domain.Record to map[string]any before normalizing
-	newCollection[recordPos] = r.normaliser.normalise(map[string]any(recordToStore))
+	newCollection[recordPos] = normalisedRecord
+
+	originalCollection := collection
 
 	r.data[resourceName] = newCollection
 	r.dirty[resourceName] = true
 
-	if err := r.persist(); err != nil {
+	r.mu.Unlock()
+
+	if err := r.handleWrite(); err != nil {
+		log.Printf("Persistence failed, rolling back UpdateRecordInCollection for resource '%s': %v", resourceName, err)
+
+		r.mu.Lock()
 		// revert changes if not possible to save to file
-		r.data[resourceName] = collection
+		r.data[resourceName] = originalCollection
 		delete(r.dirty, resourceName)
+		r.mu.Unlock()
 
 		log.Printf("Persistence failed, rolling back change for resource '%s': %v", resourceName, err)
 		return nil, err
 	}
-	return newCollection[recordPos].(domain.Record), nil
+
+	// Return the normalized record (type assertion should be safe here)
+	updatedRecord, ok := normalisedRecord.(domain.Record)
+	if !ok {
+		log.Printf("WARN: normalised record is not domain.Record type: %T", normalisedRecord)
+
+		if storedRecord, ok := newCollection[recordPos].(domain.Record); ok {
+			return storedRecord, nil
+		}
+
+		return nil, fmt.Errorf("internal error: failed to return updated record")
+	}
+	return updatedRecord, nil
 }
 
 func (r *JsonRepository) ListResources(ctx context.Context) ([]string, error) {

@@ -12,10 +12,23 @@ import (
 type OpMode int
 
 type Config struct {
-	ServerAddr string
-	DataDir    string
-	OpMode     OpMode
+	ServerAddr      string
+	DataDir         string
+	OpMode          OpMode
+	PersistenceMode PersistenceMode
 }
+
+// PersistenceMode is a custom type for defining the persistence strategy. It is defined here to be the single source of truth for configuration.
+type PersistenceMode int
+
+const (
+	// ModeImmediateSync writes every change to disk instantly and blocks the API call.
+	ModeImmediateSync PersistenceMode = iota
+	// ModeImmediateAsync writes every change to disk instantly but does NOT block the API call.
+	ModeImmediateAsync
+	// ModeBatched groups writes and saves them on a timer.
+	ModeBatched
+)
 
 const (
 	ModeServer OpMode = iota
@@ -26,14 +39,21 @@ const (
 var cfgDefaults = map[string]string{
 	"SERVER_ADDR": ":8080",
 	"DATA_DIR":    "data",
+	"PERSISTENCE": "immediate_async",
 	//"OP_MODE" should not be here as the mode is set at run time
+
 }
 
 // Default return a configuration object with defaults so can bypass .env file or ENV vars
 func Default() *Config {
+	// Parse the default string to get the type-safe enum.
+	// safe to ignore the error as this defined by us just above
+	defaultPersistenceMode, _ := parsePersistenceMode(cfgDefaults["PERSISTENCE_MODE"])
+
 	return &Config{
-		ServerAddr: cfgDefaults["SERVER_ADDR"],
-		DataDir:    cfgDefaults["DATA_DIR"],
+		ServerAddr:      cfgDefaults["SERVER_ADDR"],
+		DataDir:         cfgDefaults["DATA_DIR"],
+		PersistenceMode: defaultPersistenceMode,
 	}
 }
 
@@ -43,17 +63,39 @@ func Load() (*Config, error) {
 	if err := loadEnvFile(".env"); err != nil {
 
 		if !os.IsNotExist(errors.Unwrap(err)) {
-
 			// If it's some other relevant error return it.
 			return nil, err
 		}
 	}
 
+	modeStr := getEnv("PERSISTENCE", cfgDefaults["PERSISTENCE"])
+	persistenceMode, err := parsePersistenceMode(modeStr)
+	if err != nil {
+		return nil, err
+	}
+
 	cfg := &Config{
-		ServerAddr: getEnv("SERVER_ADDR", cfgDefaults["SERVER_ADDR"]),
-		DataDir:    getEnv("DATA_DIR", cfgDefaults["DATA_DIR"]),
+		ServerAddr:      getEnv("SERVER_ADDR", cfgDefaults["SERVER_ADDR"]),
+		DataDir:         getEnv("DATA_DIR", cfgDefaults["DATA_DIR"]),
+		PersistenceMode: persistenceMode,
 	}
 	return cfg, nil
+}
+
+func parsePersistenceMode(modeStr string) (PersistenceMode, error) {
+	var persistenceMode PersistenceMode
+	switch strings.ToLower(modeStr) {
+	case "immediate_sync":
+		persistenceMode = ModeImmediateSync
+	case "immediate_async":
+		persistenceMode = ModeImmediateAsync
+	case "batched":
+		persistenceMode = ModeBatched
+	default:
+		return 0, fmt.Errorf("invalid PERSISTENCE_MODE: '%s'. valid options are 'immediate_sync', 'immediate_async', 'batched'", modeStr)
+	}
+
+	return persistenceMode, nil
 }
 
 // getEnv returns the value of an environment var or the default

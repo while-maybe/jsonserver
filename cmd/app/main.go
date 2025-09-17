@@ -36,7 +36,7 @@ func main() {
 		log.Println("INFO: Initialising file-based repository.")
 
 		var err error
-		repo, err = jsonrepo.NewJsonRepository(cfg.DataDir)
+		repo, err = jsonrepo.NewJsonRepository(cfg)
 		if err != nil {
 			log.Fatalf("Failed to create repository: %v", err)
 		}

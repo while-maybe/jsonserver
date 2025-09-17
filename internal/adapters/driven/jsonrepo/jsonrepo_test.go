@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"jsonserver/internal/adapters/driven/jsonrepo"
+	"jsonserver/internal/config"
 	"jsonserver/internal/core/domain"
 	"jsonserver/internal/core/service/resource"
 	"maps"
@@ -63,15 +64,20 @@ func setupTestEnvironment(t *testing.T, initialData string, mockP jsonrepo.Persi
 	var repo resource.Repository
 	var err error
 
-	repo, err = jsonrepo.NewJsonRepository(dataDir, jsonrepo.WithPersister(mockP), jsonrepo.WithWatcher(mockW))
+	cfg := &config.Config{
+		ServerAddr:      ":8080",
+		DataDir:         dataDir,
+		PersistenceMode: config.ModeImmediateSync,
+	}
+
+	repo, err = jsonrepo.NewJsonRepository(cfg, jsonrepo.WithPersister(mockP), jsonrepo.WithWatcher(mockW))
 	require.NoError(t, err, "failed to initialise repository in test setup")
 
 	return repo, dataDir
 }
 
-// verifyResourceState is a test helper that checks both the cache and the persisted file
-// to ensure the resource matches the expected state.
-func verifyResourceState(t *testing.T, ctx context.Context, repo resource.Repository, dbFilename, resourceName string, wantState []domain.Record) {
+// verifyResourceState is a test helper that checks both the cache and the persisted file to ensure the resource matches the expected state.
+func verifyResourceState(t *testing.T, ctx context.Context, cfg *config.Config, repo resource.Repository, resourceName string, wantState []domain.Record) {
 	t.Helper()
 
 	// assert equal record in-memory cache
@@ -83,7 +89,7 @@ func verifyResourceState(t *testing.T, ctx context.Context, repo resource.Reposi
 	assert.ElementsMatch(t, wantState, recordsInCache)
 
 	// get a new repo from test file
-	persistedRepo, err := jsonrepo.NewJsonRepository(dbFilename)
+	persistedRepo, err := jsonrepo.NewJsonRepository(cfg)
 	require.NoError(t, err, "failed to create a new repo from the persisted file")
 
 	recordsInFile, err := persistedRepo.GetAllRecords(ctx, resourceName)
@@ -294,10 +300,17 @@ func TestCreateRecord(t *testing.T) {
 	}
 
 	for name, tc := range testCases {
+
 		t.Run(name, func(t *testing.T) {
 
-			repo, dbFilename := setupTestEnvironment(t, tc.initialData, nil, nil)
+			repo, dataDir := setupTestEnvironment(t, tc.initialData, nil, nil)
 			ctx := context.Background()
+
+			cfg := &config.Config{
+				ServerAddr:      ":8080",
+				DataDir:         dataDir,
+				PersistenceMode: config.ModeImmediateSync,
+			}
 
 			createdRecord, err := repo.CreateRecord(ctx, tc.resourceName, tc.recordToAdd)
 
@@ -320,7 +333,7 @@ func TestCreateRecord(t *testing.T) {
 			assert.Equal(t, createdRecord, inCacheRecord)
 
 			// assert equal record in file
-			persistedRepo, err := jsonrepo.NewJsonRepository(dbFilename)
+			persistedRepo, err := jsonrepo.NewJsonRepository(cfg)
 			require.NoError(t, err, "failed to create a new repo from the persisted file")
 
 			persistedRecord, err := persistedRepo.GetRecordByID(ctx, tc.resourceName, recordID)
@@ -399,8 +412,14 @@ func TestUpsertRecordByKey(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 
-			repo, dbFilename := setupTestEnvironment(t, tc.initialData, nil, nil)
+			repo, dataDir := setupTestEnvironment(t, tc.initialData, nil, nil)
 			ctx := context.Background()
+
+			cfg := &config.Config{
+				ServerAddr:      ":8080",
+				DataDir:         dataDir,
+				PersistenceMode: config.ModeImmediateSync,
+			}
 
 			createdRecord, isNewRecord, err := repo.UpsertRecordByKey(ctx, tc.resourceName, tc.recordKey, tc.recordToAdd)
 
@@ -431,7 +450,7 @@ func TestUpsertRecordByKey(t *testing.T) {
 			assert.Equal(t, expectedFetchedRecord, inCacheRecord)
 
 			// assert equal record in file
-			persistedRepo, err := jsonrepo.NewJsonRepository(dbFilename)
+			persistedRepo, err := jsonrepo.NewJsonRepository(cfg)
 			require.NoError(t, err, "failed to create a new repo from the persisted file")
 
 			persistedRecord, err := persistedRepo.GetRecordByID(ctx, tc.resourceName, tc.recordKey)
@@ -497,8 +516,14 @@ func TestDeleteRecordFromCollection(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 
-			repo, dbFilename := setupTestEnvironment(t, tc.initialData, nil, nil)
+			repo, dataDir := setupTestEnvironment(t, tc.initialData, nil, nil)
 			ctx := context.Background()
+
+			cfg := &config.Config{
+				ServerAddr:      ":8080",
+				DataDir:         dataDir,
+				PersistenceMode: config.ModeImmediateSync,
+			}
 
 			err := repo.DeleteRecordFromCollection(ctx, tc.resourceName, tc.recordKeytoDelete)
 
@@ -514,7 +539,7 @@ func TestDeleteRecordFromCollection(t *testing.T) {
 				return
 			}
 
-			verifyResourceState(t, ctx, repo, dbFilename, tc.resourceName, tc.wantCollection)
+			verifyResourceState(t, ctx, cfg, repo, tc.resourceName, tc.wantCollection)
 		})
 	}
 }
@@ -581,8 +606,14 @@ func TestDeleteRecordByKey(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 
-			repo, dbFilename := setupTestEnvironment(t, tc.initialData, nil, nil)
+			repo, dataDir := setupTestEnvironment(t, tc.initialData, nil, nil)
 			ctx := context.Background()
+
+			cfg := &config.Config{
+				ServerAddr:      ":8080",
+				DataDir:         dataDir,
+				PersistenceMode: config.ModeImmediateSync,
+			}
 
 			err := repo.DeleteRecordByKey(ctx, tc.resourceName, tc.recordKeytoDelete)
 
@@ -598,7 +629,7 @@ func TestDeleteRecordByKey(t *testing.T) {
 				return
 			}
 
-			verifyResourceState(t, ctx, repo, dbFilename, tc.resourceName, tc.wantKeyedObject)
+			verifyResourceState(t, ctx, cfg, repo, tc.resourceName, tc.wantKeyedObject)
 		})
 	}
 }
@@ -690,8 +721,14 @@ func TestUpdateRecordInCollection(t *testing.T) {
 	for name, tc := range testCases {
 		t.Run(name, func(t *testing.T) {
 
-			repo, dbFilename := setupTestEnvironment(t, tc.initialData, nil, nil)
+			repo, dataDir := setupTestEnvironment(t, tc.initialData, nil, nil)
 			ctx := context.Background()
+
+			cfg := &config.Config{
+				ServerAddr:      ":8080",
+				DataDir:         dataDir,
+				PersistenceMode: config.ModeImmediateSync,
+			}
 
 			updatedRecord, err := repo.UpdateRecordInCollection(ctx, tc.resourceName, tc.recordID, tc.recordToUpdate)
 
@@ -710,7 +747,7 @@ func TestUpdateRecordInCollection(t *testing.T) {
 			// assert equal record is returned by CreateRecord
 			assert.Equal(t, tc.wantReturnedRecord, updatedRecord)
 
-			verifyResourceState(t, ctx, repo, dbFilename, tc.resourceName, tc.wantCollection)
+			verifyResourceState(t, ctx, cfg, repo, tc.resourceName, tc.wantCollection)
 		})
 	}
 }

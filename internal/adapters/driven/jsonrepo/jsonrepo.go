@@ -34,9 +34,10 @@ type JsonRepository struct {
 	isPersisting atomic.Bool
 	dirty        map[string]bool // resources that have changed since last load from file
 	// persistence fields
-	mode       config.PersistenceMode
-	writeQueue chan struct{} // signals there is something waiting to be written
-	shutdown   chan struct{} // signals background processes to stop
+	mode             config.PersistenceMode
+	persistenceTimer time.Duration
+	writeQueue       chan struct{} // signals there is something waiting to be written
+	shutdown         chan struct{} // signals background processes to stop
 }
 
 type Option func(*JsonRepository) error
@@ -66,14 +67,11 @@ func NewJsonRepository(cfg *config.Config, opts ...Option) (*JsonRepository, err
 		normaliser: NewDataNormaliser(),
 		dirty:      make(map[string]bool),
 		// set the persistence mode from the config
-		mode:       cfg.PersistenceMode,
-		writeQueue: make(chan struct{}, 1),
-		shutdown:   make(chan struct{}),
+		mode:             cfg.PersistenceMode,
+		persistenceTimer: cfg.PersistenceTimer,
+		writeQueue:       make(chan struct{}, 1),
+		shutdown:         make(chan struct{}),
 	}
-
-	// if err := initDataDir(repo.dataDir); err != nil {
-	// 	return nil, fmt.Errorf("failed to initialise data directory: %w", err)
-	// }
 
 	// apply provided options
 	for _, opt := range opts {
@@ -107,7 +105,7 @@ func NewJsonRepository(cfg *config.Config, opts ...Option) (*JsonRepository, err
 	}
 
 	if repo.mode == config.ModeBatched {
-		go repo.batchPersistWorker(5 * time.Second) //TODO this needs to be configurable from .env
+		go repo.batchPersistWorker(repo.persistenceTimer)
 	}
 
 	// if err := repo.loadFromDir(); err != nil {

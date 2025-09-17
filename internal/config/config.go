@@ -6,16 +6,18 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 // OpMode is a custom type to represent the application's operating mode - read from configured folder or stdin
 type OpMode int
 
 type Config struct {
-	ServerAddr      string
-	DataDir         string
-	OpMode          OpMode
-	PersistenceMode PersistenceMode
+	ServerAddr       string
+	DataDir          string
+	OpMode           OpMode
+	PersistenceMode  PersistenceMode
+	PersistenceTimer time.Duration
 }
 
 // PersistenceMode is a custom type for defining the persistence strategy. It is defined here to be the single source of truth for configuration.
@@ -37,9 +39,10 @@ const (
 
 // change here only as it populates both default and env aware configs
 var cfgDefaults = map[string]string{
-	"SERVER_ADDR": ":8080",
-	"DATA_DIR":    "data",
-	"PERSISTENCE": "immediate_async",
+	"SERVER_ADDR":       ":8080",
+	"DATA_DIR":          "data",
+	"PERSISTENCE_MODE":  "immediate_async",
+	"PERSISTENCE_TIMER": "5000ms",
 	//"OP_MODE" should not be here as the mode is set at run time
 
 }
@@ -49,11 +52,13 @@ func Default() *Config {
 	// Parse the default string to get the type-safe enum.
 	// safe to ignore the error as this defined by us just above
 	defaultPersistenceMode, _ := parsePersistenceMode(cfgDefaults["PERSISTENCE_MODE"])
+	defaultPersistenceTimer, _ := time.ParseDuration(cfgDefaults["PERSISTENCE_TIMER"])
 
 	return &Config{
-		ServerAddr:      cfgDefaults["SERVER_ADDR"],
-		DataDir:         cfgDefaults["DATA_DIR"],
-		PersistenceMode: defaultPersistenceMode,
+		ServerAddr:       cfgDefaults["SERVER_ADDR"],
+		DataDir:          cfgDefaults["DATA_DIR"],
+		PersistenceMode:  defaultPersistenceMode,
+		PersistenceTimer: defaultPersistenceTimer,
 	}
 }
 
@@ -68,16 +73,23 @@ func Load() (*Config, error) {
 		}
 	}
 
-	modeStr := getEnv("PERSISTENCE", cfgDefaults["PERSISTENCE"])
+	modeStr := getEnv("PERSISTENCE_MODE", cfgDefaults["PERSISTENCE_MODE"])
 	persistenceMode, err := parsePersistenceMode(modeStr)
 	if err != nil {
 		return nil, err
 	}
 
+	timerStr := getEnv("PERSISTENCE_TIMER", cfgDefaults["PERSISTENCE_TIMER"])
+	persistenceTimer, err := time.ParseDuration(timerStr)
+	if err != nil {
+		return nil, fmt.Errorf("config error: a time duration value is a possibly signed sequence of decimal numbers, each with optional fraction and a unit suffix, such as \"300ms\", \"-1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\": %v", err)
+	}
+
 	cfg := &Config{
-		ServerAddr:      getEnv("SERVER_ADDR", cfgDefaults["SERVER_ADDR"]),
-		DataDir:         getEnv("DATA_DIR", cfgDefaults["DATA_DIR"]),
-		PersistenceMode: persistenceMode,
+		ServerAddr:       getEnv("SERVER_ADDR", cfgDefaults["SERVER_ADDR"]),
+		DataDir:          getEnv("DATA_DIR", cfgDefaults["DATA_DIR"]),
+		PersistenceMode:  persistenceMode,
+		PersistenceTimer: persistenceTimer,
 	}
 	return cfg, nil
 }

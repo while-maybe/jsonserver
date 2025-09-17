@@ -29,7 +29,7 @@ This server is built upon several core principles to ensure it is both powerful 
 
 ### Prerequisites
 
-*   Go `1.22` or later.
+*   Go `1.25` or later.
 *   Git
 
 ### 1. Installation

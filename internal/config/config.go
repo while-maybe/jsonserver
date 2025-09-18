@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -13,11 +14,16 @@ import (
 type OpMode int
 
 type Config struct {
-	ServerAddr       string
-	DataDir          string
-	OpMode           OpMode
+	ServerAddr string
+	DataDir    string
+	OpMode     OpMode
+	// persistence strategy settings
 	PersistenceMode  PersistenceMode
 	PersistenceTimer time.Duration
+	// delay settings
+	EnableDelay bool
+	BaseDelay   time.Duration
+	RandDelay   time.Duration
 }
 
 // PersistenceMode is a custom type for defining the persistence strategy. It is defined here to be the single source of truth for configuration.
@@ -39,12 +45,16 @@ const (
 
 // change here only as it populates both default and env aware configs
 var cfgDefaults = map[string]string{
-	"SERVER_ADDR":       ":8080",
-	"DATA_DIR":          "data",
+	"SERVER_ADDR": ":8080",
+	"DATA_DIR":    "data",
+	// "OP_MODE" should not be here as the mode is set at run time
+	// persistence settings
 	"PERSISTENCE_MODE":  "immediate_async",
 	"PERSISTENCE_TIMER": "5000ms",
-	//"OP_MODE" should not be here as the mode is set at run time
-
+	// delay settings
+	"ENABLE_DELAY": "false",
+	"BASE_DELAY":   "0s",
+	"RAND_DELAY":   "0s",
 }
 
 // Default return a configuration object with defaults so can bypass .env file or ENV vars
@@ -54,11 +64,21 @@ func Default() *Config {
 	defaultPersistenceMode, _ := parsePersistenceMode(cfgDefaults["PERSISTENCE_MODE"])
 	defaultPersistenceTimer, _ := time.ParseDuration(cfgDefaults["PERSISTENCE_TIMER"])
 
+	// delay settings
+	defaultEnableDelay, _ := strconv.ParseBool(cfgDefaults["ENABLE_DELAY"])
+	defaultBaseDelay, _ := time.ParseDuration(cfgDefaults["BASE_DELAY"])
+	defaultRandDelay, _ := time.ParseDuration(cfgDefaults["RAND_DELAY"])
+
 	return &Config{
-		ServerAddr:       cfgDefaults["SERVER_ADDR"],
-		DataDir:          cfgDefaults["DATA_DIR"],
+		ServerAddr: cfgDefaults["SERVER_ADDR"],
+		DataDir:    cfgDefaults["DATA_DIR"],
+		// persistence settings
 		PersistenceMode:  defaultPersistenceMode,
 		PersistenceTimer: defaultPersistenceTimer,
+		// delay settings
+		EnableDelay: defaultEnableDelay,
+		BaseDelay:   defaultBaseDelay,
+		RandDelay:   defaultRandDelay,
 	}
 }
 
@@ -82,7 +102,25 @@ func Load() (*Config, error) {
 	timerStr := getEnv("PERSISTENCE_TIMER", cfgDefaults["PERSISTENCE_TIMER"])
 	persistenceTimer, err := time.ParseDuration(timerStr)
 	if err != nil {
-		return nil, fmt.Errorf("config error: a time duration value is a possibly signed sequence of decimal numbers, each with optional fraction and a unit suffix, such as \"300ms\", \"-1.5h\" or \"2h45m\". Valid time units are \"ns\", \"us\" (or \"µs\"), \"ms\", \"s\", \"m\", \"h\": %v", err)
+		return nil, fmt.Errorf(`config error: a time duration value is a possibly signed sequence of decimal numbers, each with optional fraction and a unit suffix, such as "300ms", "-1.5h" or "2h45m". Valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h": %v`, err)
+	}
+
+	enableDelayStr := getEnv("ENABLE_DELAY", cfgDefaults["ENABLE_DELAY"])
+	enableDelay, err := strconv.ParseBool(enableDelayStr)
+	if err != nil {
+		return nil, fmt.Errorf(`ENABLE_DELAY should be "true" of "false"`)
+	}
+
+	baseDelayStr := getEnv("BASE_DELAY", cfgDefaults["BASE_DELAY"])
+	baseDelay, err := time.ParseDuration(baseDelayStr)
+	if err != nil {
+		return nil, fmt.Errorf(`config error: a time duration value is a possibly signed sequence of decimal numbers, each with optional fraction and a unit suffix, such as "300ms", "-1.5h" or "2h45m". Valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h": %v`, err)
+	}
+
+	randDelayStr := getEnv("RAND_DELAY", cfgDefaults["RAND_DELAY"])
+	randDelay, err := time.ParseDuration(randDelayStr)
+	if err != nil {
+		return nil, fmt.Errorf(`config error: a time duration value is a possibly signed sequence of decimal numbers, each with optional fraction and a unit suffix, such as "300ms", "-1.5h" or "2h45m". Valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h": %v`, err)
 	}
 
 	cfg := &Config{
@@ -90,6 +128,9 @@ func Load() (*Config, error) {
 		DataDir:          getEnv("DATA_DIR", cfgDefaults["DATA_DIR"]),
 		PersistenceMode:  persistenceMode,
 		PersistenceTimer: persistenceTimer,
+		EnableDelay:      enableDelay,
+		BaseDelay:        baseDelay,
+		RandDelay:        randDelay,
 	}
 	return cfg, nil
 }

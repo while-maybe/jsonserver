@@ -53,7 +53,7 @@ func (h *Handler) decodeJSON(r *http.Request, data any) error {
 }
 
 func (h *Handler) respondWithJSON(w http.ResponseWriter, responseCode int, data any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(responseCode)
 
 	opts := jsonv2.JoinOptions(jsontext.Multiline(true), jsontext.WithIndent("  "))

@@ -97,23 +97,23 @@ func (h *Handler) handleError(w http.ResponseWriter, err error) {
 }
 
 func (h *Handler) apiV1Router() http.Handler {
-	r := chi.NewRouter()
-	r.Use(RequestSizeLimit(MaxRequestSize)) // enforce MaxRequestSize limit
+	router := chi.NewRouter()
+	router.Use(RequestSizeLimit(MaxRequestSize)) // enforce MaxRequestSize limit
 
 	// Read operations - use specific 'recordID' for clarity
-	r.With(RequireURLParams("resourceName")).Get("/{resourceName}", h.HandleGetAllRecords)
-	r.With(RequireURLParams("resourceName", "recordID")).Get("/{resourceName}/{recordID}", h.HandleGetRecordByID)
-	r.Get("/", h.HandleListResources)
+	router.With(RequireURLParams("resourceName")).Get("/{resourceName}", h.HandleGetAllRecords)
+	router.With(RequireURLParams("resourceName", "recordID")).Get("/{resourceName}/{recordID}", h.HandleGetRecordByID)
+	router.Get("/", h.HandleListResources)
 
 	// Write operations with size limits - use generic 'identifier' for flexibility
-	r.Group(func(r chi.Router) {
+	router.Group(func(r chi.Router) {
 		r.With(RequireURLParams("resourceName")).Post("/{resourceName}", h.HandleCreateRecord)
 		r.With(RequireURLParams("resourceName", "identifier")).Put("/{resourceName}/{identifier}", h.HandleUpdate)
 		// .Delete() grouped here for future auth
 		r.With(RequireURLParams("resourceName", "identifier")).Delete("/{resourceName}/{identifier}", h.HandleDelete)
 	})
 
-	return r
+	return router
 }
 
 func (h *Handler) SetupRoutes() http.Handler {
